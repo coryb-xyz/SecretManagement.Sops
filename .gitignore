@@ -1,0 +1,34 @@
+# Test Data - DO NOT COMMIT KEYS
+Tests/TestData/test-key.txt
+Tests/TestData/*.key
+Tests/TestData/*.pem
+
+# Encrypted test files (optional - can be regenerated)
+Tests/TestData/simple-secret.yaml
+Tests/TestData/k8s-secret.yaml
+Tests/TestData/credentials.yaml
+Tests/TestData/.sops.yaml
+
+# PowerShell
+*.ps1xml
+*.log
+
+# Build outputs
+bin/
+obj/
+*.nupkg
+Build/
+TestResults.xml
+.build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

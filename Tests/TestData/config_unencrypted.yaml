@@ -1,0 +1,6 @@
+# Plain configuration file with _unencrypted suffix
+# Should be excluded when RequireEncryption=true and .sops.yaml has unencrypted_suffix: _unencrypted
+app_name: myapp
+app_version: 1.0.0
+database_host: localhost
+database_port: 5432

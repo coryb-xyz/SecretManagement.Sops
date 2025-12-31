@@ -1,0 +1,222 @@
+﻿#Requires -Modules @{ ModuleName='Pester'; ModuleVersion='5.0.0' }
+
+BeforeAll {
+    # Import the main module
+    $modulePath = Join-Path $PSScriptRoot '..\SecretManagement.Sops\SecretManagement.Sops.psd1'
+    Import-Module $modulePath -Force
+
+    # Test data directory
+    $script:TestDataPath = Join-Path $PSScriptRoot 'TestData'
+}
+
+Describe 'Module Import' -Tag 'ReadSupport', 'Unit' {
+    It 'Main module manifest is valid' {
+        $modulePath = Join-Path $PSScriptRoot '..\SecretManagement.Sops\SecretManagement.Sops.psd1'
+        { Test-ModuleManifest -Path $modulePath -ErrorAction Stop } | Should -Not -Throw
+    }
+
+    It 'Extension module manifest is valid' {
+        $extensionPath = Join-Path $PSScriptRoot '..\SecretManagement.Sops\SecretManagement.Sops.Extension\SecretManagement.Sops.Extension.psd1'
+        { Test-ModuleManifest -Path $extensionPath -ErrorAction Stop } | Should -Not -Throw
+    }
+
+    It 'Helper functions are available' {
+        $expectedFunctions = @(
+            'Test-SopsAvailable'
+            'Invoke-SopsDecrypt'
+            'Resolve-SecretName'
+            'Get-SecretIndexEntry'
+            'Get-SecretIndex'
+        )
+
+        foreach ($func in $expectedFunctions) {
+            Get-Command $func -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty -Because "$func should be exported"
+        }
+    }
+}
+
+Describe 'Test-SopsAvailable' -Tag 'ReadSupport', 'Unit' {
+    It 'Returns true when SOPS is in PATH' {
+        Test-SopsAvailable | Should -Be $true
+    }
+}
+
+Describe 'Resolve-SecretName' -Tag 'ReadSupport', 'Unit' {
+    Context 'RelativePath strategy' {
+        It 'Removes base path and extension' {
+            $result = Resolve-SecretName -FilePath 'C:\secrets\db\password.yaml' -BasePath 'C:\secrets' -NamingStrategy 'RelativePath'
+            $result | Should -Be 'db/password'
+        }
+
+        It 'Handles deeply nested paths' {
+            $result = Resolve-SecretName -FilePath 'C:\secrets\app\prod\api\keys.yaml' -BasePath 'C:\secrets' -NamingStrategy 'RelativePath'
+            $result | Should -Be 'app/prod/api/keys'
+        }
+
+        It 'Handles file in root of base path' {
+            $result = Resolve-SecretName -FilePath 'C:\secrets\secret.yaml' -BasePath 'C:\secrets' -NamingStrategy 'RelativePath'
+            $result | Should -Be 'secret'
+        }
+    }
+
+    Context 'FileName strategy' {
+        It 'Returns only filename without extension' {
+            $result = Resolve-SecretName -FilePath 'C:\secrets\nested\deep\myfile.yaml' -BasePath 'C:\secrets' -NamingStrategy 'FileName'
+            $result | Should -Be 'myfile'
+        }
+    }
+}
+
+Describe 'Integration Tests' -Tag 'ReadSupport', 'Integration', 'RequiresSops' {
+    BeforeAll {
+        # Store test key file path for vault registration
+        $testKeyFile = Join-Path $script:TestDataPath 'test-key.txt'
+        if (-not (Test-Path $testKeyFile)) {
+            Write-Warning "Test key file not found: $testKeyFile. Some tests may fail."
+        }
+    }
+
+    Context 'Invoke-SopsDecrypt' {
+        It 'Decrypts simple YAML file' {
+            $testFile = Join-Path $script:TestDataPath 'simple-secret.yaml'
+            $result = Invoke-SopsDecrypt -FilePath $testFile
+            $result | Should -Not -BeNullOrEmpty
+            $result | Should -Match 'database_host'
+        }
+
+        It 'Throws on non-existent file' {
+            { Invoke-SopsDecrypt -FilePath 'C:\nonexistent.yaml' } | Should -Throw
+        }
+    }
+
+    Context 'Get-SecretIndex' {
+        It 'Finds YAML files in directory' {
+            $index = Get-SecretIndex -Path $script:TestDataPath -FilePattern '*.yaml' -Recurse $false
+            $index | Should -Not -BeNullOrEmpty
+            $index.Count | Should -BeGreaterThan 0
+        }
+
+        It 'Indexes Kubernetes Secret YAML files' {
+            $index = Get-SecretIndex -Path $script:TestDataPath -FilePattern 'k8s-secret.yaml' -Recurse $false
+            # Since we return raw YAML, the index uses the filename, not K8s metadata.name
+            $k8sEntry = $index | Where-Object { $_.Name -match 'k8s-secret' } | Select-Object -First 1
+            $k8sEntry | Should -Not -BeNullOrEmpty
+            $k8sEntry.Name | Should -Be 'k8s-secret'
+        }
+    }
+
+    Context 'SecretManagement Extension' {
+        BeforeAll {
+            # Import SecretManagement module
+            Import-Module Microsoft.PowerShell.SecretManagement -Force
+
+            # Register test vault
+            $vaultName = 'SopsTestVault'
+            $modulePath = Join-Path $PSScriptRoot '..' 'SecretManagement.Sops'
+
+            try {
+                Unregister-SecretVault -Name $vaultName -ErrorAction SilentlyContinue
+            }
+ catch {}
+
+            Register-SecretVault -Name $vaultName -ModuleName $modulePath -VaultParameters @{
+                Path        = $script:TestDataPath
+                FilePattern = '*.yaml'
+                Recurse     = $false
+                AgeKeyFile  = $testKeyFile
+            }
+
+            $script:VaultName = $vaultName
+        }
+
+        AfterAll {
+            if ($script:VaultName) {
+                Unregister-SecretVault -Name $script:VaultName -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'Test-SecretVault returns true for valid configuration' {
+            Test-SecretVault -Name $script:VaultName | Should -Be $true
+        }
+
+        It 'Get-SecretInfo lists available secrets' {
+            $secrets = Get-SecretInfo -Vault $script:VaultName
+            $secrets | Should -Not -BeNullOrEmpty
+            $secrets.Count | Should -BeGreaterThan 0
+        }
+
+        It 'Get-SecretInfo filters by pattern' {
+            $secrets = Get-SecretInfo -Vault $script:VaultName -Name 'api*'
+            $secrets | Should -Not -BeNullOrEmpty
+            $secrets.Name | Should -Match 'api'
+        }
+
+        It 'Get-Secret retrieves simple secret' {
+            # This will depend on the actual secret names in your test data
+            $secrets = Get-SecretInfo -Vault $script:VaultName
+            $firstSecret = $secrets | Select-Object -First 1
+
+            if ($firstSecret) {
+                $secret = Get-Secret -Name $firstSecret.Name -Vault $script:VaultName -AsPlainText
+                $secret | Should -Not -BeNullOrEmpty
+            }
+        }
+
+        It 'Get-Secret retrieves K8s Secret as raw YAML' {
+            $secret = Get-Secret -Name 'k8s-secret' -Vault $script:VaultName -AsPlainText
+            # Should return raw YAML string, not typed object
+            $secret | Should -BeOfType [string]
+            $secret | Should -Match 'license-key'
+            $secret | Should -Match 'software-license'
+        }
+
+        It 'Get-Secret returns raw YAML for username/password' {
+            # Find the credentials secret
+            $secrets = Get-SecretInfo -Vault $script:VaultName
+            $credSecret = $secrets | Where-Object { $_.Name -match 'credentials' } | Select-Object -First 1
+
+            if ($credSecret) {
+                $cred = Get-Secret -Name $credSecret.Name -Vault $script:VaultName -AsPlainText
+                # Should return raw YAML string, not PSCredential
+                $cred | Should -BeOfType [string]
+                $cred | Should -Match 'username'
+                $cred | Should -Match 'password'
+            }
+        }
+
+        It 'Get-Secret returns null for non-existent secret' {
+            $secret = Get-Secret -Name 'nonexistent-secret' -Vault $script:VaultName -ErrorAction SilentlyContinue
+            $secret | Should -BeNullOrEmpty
+        }
+    }
+}
+
+Describe 'Error Handling' -Tag 'ReadSupport', 'Unit' {
+    BeforeAll {
+        # Import module for mocking
+        $modulePath = Join-Path $PSScriptRoot '..\SecretManagement.Sops\SecretManagement.Sops.psd1'
+        Import-Module $modulePath -Force
+    }
+
+    It 'Provides helpful error for missing SOPS binary' {
+        InModuleScope 'SecretManagement.Sops' {
+            Mock Test-SopsAvailable { return $false }
+
+            $testFile = Join-Path $TestDrive 'test.yaml'
+            Set-Content -Path $testFile -Value 'key: value'
+
+            { Invoke-SopsDecrypt -FilePath $testFile } | Should -Throw '*SOPS binary not found*'
+        }
+    }
+
+    It 'Provides helpful error for Azure CLI issues' {
+        Mock Test-SopsAvailable { $true } -ModuleName 'SecretManagement.Sops'
+        Mock Invoke-Expression {
+            $global:LASTEXITCODE = 1
+            return "az: command not found"
+        } -ModuleName 'SecretManagement.Sops'
+
+        # This test would need more sophisticated mocking to work properly
+        # Left as a placeholder for future enhancement
+    }
+}

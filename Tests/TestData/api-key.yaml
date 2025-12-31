@@ -1,0 +1,16 @@
+apikey: rootlevelkey
+sops:
+    age:
+        - recipient: age1d0w0phf6glwkgzvjr7mk0exc3vju3rcxlgrladpntc0uq4tp7ulsw3g6ty
+          enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBrdytyS3BEcTN6TXd1U0hY
+            RmM2M2I1RXFQOEYwVlh2TE9ub09kU2dFelFrClhuTVY0ZzA1T3VyZ1NwRDZ4QTRJ
+            SUl4aXc4d20yU2ZkUmE1Y0EzU1duZ0EKLS0tIFFkMXJCTE1xZ3NQdy9GaU9yRGRk
+            RllpNjhQYVJpVFhWTjg2V0JGS0U5dTgKrL+vsJqt9oDbMs2yAaHMKeKXnyGgxhmp
+            yExljaBdnYuTQiyHH1HYS4iPJaYN4kxUrffHvLCVKOeeDC/oSNbY/A==
+            -----END AGE ENCRYPTED FILE-----
+    lastmodified: "2025-12-24T05:44:55Z"
+    mac: ENC[AES256_GCM,data:7MdnkRUZZa0AG/0cXpQwo+BynpE6CVJx+MGPhcZ11Oac5zQuzx+V6NDIxp2RNz2+p5nKLBkvSLlQcTQYrU3f41+eQLZ8XzwHG1ELjLcCG3slk4nvb8u/ahiVDV/o+KNoPCS9QYTwkq1omcL4DA5VTofV3iO4dsEjLOaTDdliDyw=,iv:0cBFqawMGKfZj/sBywD6kWyuIomcvVZV1O7NAuml3eo=,tag:fWFsQE/jy78fwCnBodXhPQ==,type:str]
+    encrypted_regex: ^(data|stringData)$
+    version: 3.11.0

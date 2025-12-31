@@ -1,0 +1,8 @@
+# Edge case: Has "sops:" key but no "version:" field
+# This should NOT be detected as a SOPS-encrypted file
+sops:
+    # Missing version field
+    lastmodified: "2025-12-30T00:00:00Z"
+
+database_host: localhost
+database_port: 5432

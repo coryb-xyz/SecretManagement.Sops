@@ -1,0 +1,19 @@
+username: dbuser
+password: dbpass
+host: localhost
+port: 5432
+sops:
+    age:
+        - recipient: age1d0w0phf6glwkgzvjr7mk0exc3vju3rcxlgrladpntc0uq4tp7ulsw3g6ty
+          enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBPYU5hSmRFLzJheERDM0Y5
+            WSsxaXZPcVFFNWdNWkpDR1luYUdYaE1HeG4wCjlyam16NkJ1UStXNXpqdVExWHNX
+            WHhmcEltWmVrZnRhUjNoZGlMY3JZbW8KLS0tIFpqVmxoYk1leWE3aE9NWXQ0cEFK
+            Kzh3blVTYjJXSXNlK0NVSDAwVDByZk0KsgpQApqXY8pz+3NpdZ1cVcsQ15/zloNF
+            2T5GpPfcKG4u62UT/MWpmdHjAFEOC8ylbgqDQDeWArPTJHwpUsi0Sg==
+            -----END AGE ENCRYPTED FILE-----
+    lastmodified: "2025-12-24T05:44:43Z"
+    mac: ENC[AES256_GCM,data:4cg/L9xrG52H5TIbINUsgMyWD+krFRcz9FWq+1FhjntKmqUAdcw++Mm6Gm7/DS19BnHIu7haypPv0sXQ3IvoAE5+uw0CWSgegp49I82TeA67pYUDoTDkHc1gFOUSGG8VXMNb5DhRtS+d4PpfNa4Vp89yqvNXV6nUDX2bu9Nqp3A=,iv:wcUZy/8Twcldw2tmGtHAzAveIWOSr0WCEiFzBc1XhZI=,tag:q6MmOKxcub2l2Znz8oLYTA==,type:str]
+    encrypted_regex: ^(data|stringData)$
+    version: 3.11.0
