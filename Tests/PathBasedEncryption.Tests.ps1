@@ -18,6 +18,16 @@
 #>
 
 BeforeAll {
+    # Import test helpers for isolation utilities
+    $testHelpersPath = Join-Path $PSScriptRoot 'TestHelpers.psm1'
+    Import-Module $testHelpersPath -Force
+
+    # Clean up any orphaned test vaults from previous runs
+    Remove-OrphanedTestVaults
+
+    # Save original environment state
+    $script:OriginalEnvironment = Save-SopsEnvironment
+
     # Import the main module
     $modulePath = Join-Path $PSScriptRoot '..\SecretManagement.Sops\SecretManagement.Sops.psd1'
     Import-Module $modulePath -Force
@@ -44,6 +54,13 @@ BeforeAll {
     }
 }
 
+AfterAll {
+    # Restore original environment state
+    if ($script:OriginalEnvironment) {
+        Restore-SopsEnvironment -State $script:OriginalEnvironment
+    }
+}
+
 Describe 'Path-Based Encryption Rules' -Tag 'PathBasedEncryption', 'Integration' {
     BeforeAll {
         if (-not $script:SopsAvailable -or -not $script:AgeAvailable) {
@@ -51,50 +68,21 @@ Describe 'Path-Based Encryption Rules' -Tag 'PathBasedEncryption', 'Integration'
         }
 
         # Create test vault structure
-        $script:TestVaultName = 'SopsPathBasedVault'
         $script:TestVaultPath = Join-Path $TestDrive 'gitops-repo'
         New-Item -Path $script:TestVaultPath -ItemType Directory -Force | Out-Null
 
-        # Generate two separate age keys for dev and prod environments
-        $devKeyFile = Join-Path $TestDrive 'dev-key.txt'
-        $prodKeyFile = Join-Path $TestDrive 'prod-key.txt'
+        # Generate two separate age keys for dev and prod environments using helper
+        $devKey = New-TestAgeKey -Path (Join-Path $TestDrive 'dev-key.txt')
+        $prodKey = New-TestAgeKey -Path (Join-Path $TestDrive 'prod-key.txt')
 
-        # Generate dev key
-        $devKeyOutput = & age-keygen -o $devKeyFile 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            throw "Failed to generate dev age key: $devKeyOutput"
-        }
-
-        # Generate prod key
-        $prodKeyOutput = & age-keygen -o $prodKeyFile 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            throw "Failed to generate prod age key: $prodKeyOutput"
-        }
-
-        # Extract public keys from the generated files
-        $devKeyContent = Get-Content $devKeyFile -Raw
-        $prodKeyContent = Get-Content $prodKeyFile -Raw
-
-        if ($devKeyContent -match 'public key: (.+)') {
-            $script:DevPublicKey = $Matches[1].Trim()
-        }
- else {
-            throw "Failed to extract dev public key from generated file"
-        }
-
-        if ($prodKeyContent -match 'public key: (.+)') {
-            $script:ProdPublicKey = $Matches[1].Trim()
-        }
- else {
-            throw "Failed to extract prod public key from generated file"
-        }
+        # Store key information for later use
+        $script:DevKeyFile = $devKey.KeyFile
+        $script:ProdKeyFile = $prodKey.KeyFile
+        $script:DevPublicKey = $devKey.PublicKey
+        $script:ProdPublicKey = $prodKey.PublicKey
 
         Write-Verbose "Dev Public Key: $($script:DevPublicKey)"
         Write-Verbose "Prod Public Key: $($script:ProdPublicKey)"
-
-        # Store key files for later use
-        $script:DevKeyFile = $devKeyFile
-        $script:ProdKeyFile = $prodKeyFile
 
         # Create .sops.yaml with path-based encryption rules
         # Use cross-platform regex patterns with [/\\] to match both / and \ separators
@@ -127,40 +115,50 @@ creation_rules:
         New-Item -Path (Join-Path $script:TestVaultPath 'apps/prod/api') -ItemType Directory -Force | Out-Null
         New-Item -Path (Join-Path $script:TestVaultPath 'apps/prod/web') -ItemType Directory -Force | Out-Null
 
-        # Register vault
-        try {
-            Unregister-SecretVault -Name $script:TestVaultName -ErrorAction SilentlyContinue
-        }
- catch {}
-
-        Register-SecretVault -Name $script:TestVaultName -ModuleName $modulePath -VaultParameters @{
+        # Register vault with unique isolated name
+        $script:TestVaultName = New-IsolatedTestVault -BaseName 'SopsPathBasedTest' -ModulePath $modulePath -VaultParameters @{
             Path        = $script:TestVaultPath
             FilePattern = '*.yaml'
             Recurse     = $true
         }
+        Write-Verbose "Registered isolated test vault: $script:TestVaultName"
     }
 
     AfterAll {
         if ($script:TestVaultName) {
-            Unregister-SecretVault -Name $script:TestVaultName -ErrorAction SilentlyContinue
+            Remove-IsolatedTestVault -VaultName $script:TestVaultName
         }
     }
 
     Context 'SOPS Encryption Key Selection' -Tag 'EncryptionKeys' {
         BeforeEach {
             $script:TestSecretSuffix = New-Guid
-            # Save original SOPS_AGE_KEY_FILE to restore after test
-            $script:OriginalSopsKeyFile = $env:SOPS_AGE_KEY_FILE
+            # Save environment state before each test
+            $script:TestEnvironment = Save-SopsEnvironment
         }
 
         AfterEach {
-            # Restore original SOPS_AGE_KEY_FILE
-            $env:SOPS_AGE_KEY_FILE = $script:OriginalSopsKeyFile
+            # Restore environment state first
+            if ($script:TestEnvironment) {
+                Restore-SopsEnvironment -State $script:TestEnvironment
+            }
 
-            # Clean up created secrets
-            Get-SecretInfo -Vault $script:TestVaultName -ErrorAction SilentlyContinue | ForEach-Object {
-                if ($_.Name -match $script:TestSecretSuffix) {
-                    Remove-Secret -Name $_.Name -Vault $script:TestVaultName -ErrorAction SilentlyContinue
+            # Clean up created secrets with explicit error handling
+            if ($script:TestSecretSuffix) {
+                try {
+                    Get-SecretInfo -Vault $script:TestVaultName -ErrorAction Stop | Where-Object {
+                        $_.Name -match $script:TestSecretSuffix
+                    } | ForEach-Object {
+                        try {
+                            Remove-Secret -Name $_.Name -Vault $script:TestVaultName -ErrorAction Stop
+                        }
+                        catch {
+                            Write-Warning "Failed to remove secret '$($_.Name)': $_"
+                        }
+                    }
+                }
+                catch {
+                    Write-Warning "Failed to enumerate secrets for cleanup: $_"
                 }
             }
         }

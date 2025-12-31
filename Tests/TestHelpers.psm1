@@ -493,6 +493,269 @@ function Unregister-SopsTestVault {
     }
 }
 
+<#
+.SYNOPSIS
+    Saves the current SOPS-related environment state for later restoration
+
+.OUTPUTS
+    Hashtable containing the saved environment state
+
+.EXAMPLE
+    $state = Save-SopsEnvironment
+    try {
+        $env:SOPS_AGE_KEY_FILE = $testKey
+        # ... test code ...
+    } finally {
+        Restore-SopsEnvironment -State $state
+    }
+#>
+function Save-SopsEnvironment {
+    [CmdletBinding()]
+    [OutputType([hashtable])]
+    param()
+
+    return @{
+        SOPS_AGE_KEY_FILE = $env:SOPS_AGE_KEY_FILE
+        SOPS_AGE_RECIPIENTS = $env:SOPS_AGE_RECIPIENTS
+    }
+}
+
+<#
+.SYNOPSIS
+    Restores SOPS-related environment variables from saved state
+
+.PARAMETER State
+    Hashtable containing saved environment state from Save-SopsEnvironment
+
+.EXAMPLE
+    Restore-SopsEnvironment -State $savedState
+#>
+function Restore-SopsEnvironment {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [hashtable]$State
+    )
+
+    # Restore SOPS_AGE_KEY_FILE
+    if ($null -eq $State.SOPS_AGE_KEY_FILE) {
+        Remove-Item Env:\SOPS_AGE_KEY_FILE -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:SOPS_AGE_KEY_FILE = $State.SOPS_AGE_KEY_FILE
+    }
+
+    # Restore SOPS_AGE_RECIPIENTS
+    if ($null -eq $State.SOPS_AGE_RECIPIENTS) {
+        Remove-Item Env:\SOPS_AGE_RECIPIENTS -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:SOPS_AGE_RECIPIENTS = $State.SOPS_AGE_RECIPIENTS
+    }
+}
+
+<#
+.SYNOPSIS
+    Generates a new AGE key for testing with proper isolation
+
+.PARAMETER Path
+    Path where the key file should be created (typically in $TestDrive)
+
+.OUTPUTS
+    Hashtable containing KeyFile path and PublicKey string
+
+.EXAMPLE
+    $key = New-TestAgeKey -Path (Join-Path $TestDrive 'test-key.txt')
+    $env:SOPS_AGE_KEY_FILE = $key.KeyFile
+#>
+function New-TestAgeKey {
+    [CmdletBinding()]
+    [OutputType([hashtable])]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
+
+    # Generate the key
+    $keyOutput = & age-keygen -o $Path 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to generate AGE key: $keyOutput"
+    }
+
+    # Extract public key from output
+    $publicKeyLine = $keyOutput | Where-Object { $_ -match 'public key:' } | Select-Object -First 1
+    if ($publicKeyLine -and $publicKeyLine -match 'public key:\s*(.+)') {
+        $publicKey = $matches[1].Trim()
+    }
+    else {
+        throw "Failed to extract public key from age-keygen output"
+    }
+
+    return @{
+        KeyFile = $Path
+        PublicKey = $publicKey
+    }
+}
+
+<#
+.SYNOPSIS
+    Registers a test vault with guaranteed unique name and verification
+
+.PARAMETER BaseName
+    Base name for the vault (will be suffixed with GUID for uniqueness)
+
+.PARAMETER ModulePath
+    Path to the SOPS vault module
+
+.PARAMETER VaultParameters
+    Hashtable of vault-specific parameters
+
+.OUTPUTS
+    String containing the registered vault name
+
+.EXAMPLE
+    $vaultName = New-IsolatedTestVault -BaseName 'SopsTest' -ModulePath $modulePath -VaultParameters @{ Path = $path; FilePattern = '*.yaml' }
+#>
+function New-IsolatedTestVault {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [string]$BaseName,
+
+        [Parameter(Mandatory)]
+        [string]$ModulePath,
+
+        [Parameter(Mandatory)]
+        [hashtable]$VaultParameters
+    )
+
+    # Generate unique vault name
+    $vaultName = "$BaseName-$(New-Guid)"
+
+    # Paranoid check for collision
+    $existingVault = Get-SecretVault -Name $vaultName -ErrorAction SilentlyContinue
+    if ($existingVault) {
+        throw "Vault name collision detected: $vaultName already exists"
+    }
+
+    # Register vault
+    try {
+        $registerParams = @{
+            Name = $vaultName
+            ModuleName = $ModulePath
+            VaultParameters = $VaultParameters
+        }
+        Register-SecretVault @registerParams -ErrorAction Stop
+    }
+    catch {
+        throw "Failed to register vault '$vaultName': $_"
+    }
+
+    # Verify registration
+    $registeredVault = Get-SecretVault -Name $vaultName -ErrorAction SilentlyContinue
+    if (-not $registeredVault) {
+        throw "Vault registration verification failed: $vaultName not found after registration"
+    }
+
+    Write-Verbose "Successfully registered isolated test vault: $vaultName"
+    return $vaultName
+}
+
+<#
+.SYNOPSIS
+    Unregisters a test vault with retries and verification
+
+.PARAMETER VaultName
+    Name of the vault to unregister
+
+.PARAMETER MaxAttempts
+    Maximum number of unregistration attempts (default: 3)
+
+.EXAMPLE
+    Remove-IsolatedTestVault -VaultName $testVaultName
+#>
+function Remove-IsolatedTestVault {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$VaultName,
+
+        [Parameter()]
+        [int]$MaxAttempts = 3
+    )
+
+    if ([string]::IsNullOrWhiteSpace($VaultName)) {
+        Write-Warning "Remove-IsolatedTestVault called with empty vault name"
+        return
+    }
+
+    $attempt = 0
+    $unregistered = $false
+
+    while ($attempt -lt $MaxAttempts -and -not $unregistered) {
+        $attempt++
+        try {
+            Unregister-SecretVault -Name $VaultName -ErrorAction Stop
+            $unregistered = $true
+            Write-Verbose "Successfully unregistered vault: $VaultName (attempt $attempt)"
+        }
+        catch {
+            if ($attempt -eq $MaxAttempts) {
+                Write-Warning "Failed to unregister vault '$VaultName' after $MaxAttempts attempts: $_"
+            }
+            else {
+                Write-Verbose "Unregister attempt $attempt failed, retrying after delay: $_"
+                Start-Sleep -Milliseconds 100
+            }
+        }
+    }
+
+    # Verify cleanup
+    $vault = Get-SecretVault -Name $VaultName -ErrorAction SilentlyContinue
+    if ($vault) {
+        Write-Warning "Vault '$VaultName' still registered after cleanup attempts"
+    }
+}
+
+<#
+.SYNOPSIS
+    Cleans up orphaned test vaults from previous test runs
+
+.PARAMETER VaultNamePattern
+    Regex pattern to match test vault names (default: '^Sops.*Test.*')
+
+.EXAMPLE
+    Remove-OrphanedTestVaults
+    Remove-OrphanedTestVaults -VaultNamePattern '^MyTestVault.*'
+#>
+function Remove-OrphanedTestVaults {
+    [CmdletBinding()]
+    param(
+        [Parameter()]
+        [string]$VaultNamePattern = '^Sops.*Test.*'
+    )
+
+    $orphanedVaults = Get-SecretVault | Where-Object { $_.Name -match $VaultNamePattern }
+
+    if ($orphanedVaults) {
+        Write-Warning "Found $($orphanedVaults.Count) orphaned test vault(s) from previous runs:"
+        foreach ($vault in $orphanedVaults) {
+            Write-Warning "  - $($vault.Name)"
+            try {
+                Unregister-SecretVault -Name $vault.Name -ErrorAction Stop
+                Write-Verbose "    Successfully cleaned up orphaned vault: $($vault.Name)"
+            }
+            catch {
+                Write-Warning "    Failed to clean up orphaned vault '$($vault.Name)': $_"
+            }
+        }
+    }
+    else {
+        Write-Verbose "No orphaned test vaults found matching pattern: $VaultNamePattern"
+    }
+}
+
 # Export all functions
 Export-ModuleMember -Function @(
     'Test-SopsEncrypted'
@@ -504,4 +767,10 @@ Export-ModuleMember -Function @(
     'Wait-ForFileOperation'
     'Initialize-SopsTestVault'
     'Unregister-SopsTestVault'
+    'Save-SopsEnvironment'
+    'Restore-SopsEnvironment'
+    'New-TestAgeKey'
+    'New-IsolatedTestVault'
+    'Remove-IsolatedTestVault'
+    'Remove-OrphanedTestVaults'
 )

@@ -21,6 +21,16 @@
 #>
 
 BeforeAll {
+    # Import test helpers for isolation utilities
+    $testHelpersPath = Join-Path $PSScriptRoot 'TestHelpers.psm1'
+    Import-Module $testHelpersPath -Force
+
+    # Clean up any orphaned test vaults from previous runs
+    Remove-OrphanedTestVaults
+
+    # Save original environment state
+    $script:OriginalEnvironment = Save-SopsEnvironment
+
     # Import the main module
     $modulePath = Join-Path $PSScriptRoot '..\SecretManagement.Sops\SecretManagement.Sops.psd1'
     Import-Module $modulePath -Force
@@ -31,19 +41,28 @@ BeforeAll {
     }
     Import-Module Microsoft.PowerShell.SecretManagement -Force
 
-    # Auto-configure age key for testing
+    # Configure test-specific age key in isolated environment
     $testDataPath = Join-Path $PSScriptRoot 'TestData'
     $testKeyFile = Join-Path $testDataPath 'test-key.txt'
-    if ((Test-Path $testKeyFile) -and (-not $env:SOPS_AGE_KEY_FILE)) {
+    if (Test-Path $testKeyFile) {
         $env:SOPS_AGE_KEY_FILE = $testKeyFile
-        Write-Verbose "Auto-configured SOPS_AGE_KEY_FILE: $testKeyFile"
+        Write-Verbose "Configured test-isolated SOPS_AGE_KEY_FILE: $testKeyFile"
+    }
+    else {
+        throw "Test key file not found: $testKeyFile"
+    }
+}
+
+AfterAll {
+    # Restore original environment state
+    if ($script:OriginalEnvironment) {
+        Restore-SopsEnvironment -State $script:OriginalEnvironment
     }
 }
 
 Describe 'Set-Secret' -Tag 'WriteSupport', 'Integration' {
     BeforeAll {
         # Create test vault in TestDrive
-        $script:TestVaultName = 'SopsWriteTestVault'
         $script:TestSecretsPath = Join-Path $TestDrive 'secrets'
         New-Item -Path $script:TestSecretsPath -ItemType Directory -Force | Out-Null
 
@@ -67,22 +86,18 @@ creation_rules:
             }
         }
 
-        # Register vault
-        try {
-            Unregister-SecretVault -Name $script:TestVaultName -ErrorAction SilentlyContinue
-        }
- catch {}
-
-        Register-SecretVault -Name $script:TestVaultName -ModuleName $modulePath -VaultParameters @{
+        # Register vault with unique isolated name
+        $script:TestVaultName = New-IsolatedTestVault -BaseName 'SopsWriteTest' -ModulePath $modulePath -VaultParameters @{
             Path        = $script:TestSecretsPath
             FilePattern = '*.yaml'
             Recurse     = $false
         }
+        Write-Verbose "Registered isolated test vault: $script:TestVaultName"
     }
 
     AfterAll {
         if ($script:TestVaultName) {
-            Unregister-SecretVault -Name $script:TestVaultName -ErrorAction SilentlyContinue
+            Remove-IsolatedTestVault -VaultName $script:TestVaultName
         }
     }
 
@@ -92,8 +107,19 @@ creation_rules:
         }
 
         AfterEach {
-            if ($script:TestSecretName -and (Get-SecretInfo -Name $script:TestSecretName -Vault $script:TestVaultName -ErrorAction SilentlyContinue)) {
-                Remove-Secret -Name $script:TestSecretName -Vault $script:TestVaultName -ErrorAction SilentlyContinue
+            if ($script:TestSecretName) {
+                try {
+                    $secretExists = Get-SecretInfo -Name $script:TestSecretName -Vault $script:TestVaultName -ErrorAction Stop
+                    if ($secretExists) {
+                        Remove-Secret -Name $script:TestSecretName -Vault $script:TestVaultName -ErrorAction Stop
+                    }
+                }
+                catch [Microsoft.PowerShell.SecretManagement.SecretNotFoundException] {
+                    # Expected if test didn't create the secret
+                }
+                catch {
+                    Write-Warning "Failed to clean up secret '$script:TestSecretName': $_"
+                }
             }
         }
 

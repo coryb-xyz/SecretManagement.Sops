@@ -24,6 +24,16 @@
 #>
 
 BeforeAll {
+    # Import test helpers for isolation utilities
+    $testHelpersPath = Join-Path $PSScriptRoot 'TestHelpers.psm1'
+    Import-Module $testHelpersPath -Force
+
+    # Clean up any orphaned test vaults from previous runs
+    Remove-OrphanedTestVaults
+
+    # Save original environment state
+    $script:OriginalEnvironment = Save-SopsEnvironment
+
     # Import the main module
     $modulePath = Join-Path $PSScriptRoot '..\SecretManagement.Sops\SecretManagement.Sops.psd1'
     Import-Module $modulePath -Force
@@ -34,18 +44,19 @@ BeforeAll {
     }
     Import-Module Microsoft.PowerShell.SecretManagement -Force
 
-    # Auto-configure age key for testing
+    # Configure test-specific age key in isolated environment
     $testDataPath = Join-Path $PSScriptRoot 'TestData'
     $testKeyFile = Join-Path $testDataPath 'test-key.txt'
-    if ((Test-Path $testKeyFile) -and (-not $env:SOPS_AGE_KEY_FILE)) {
+    if (Test-Path $testKeyFile) {
         $env:SOPS_AGE_KEY_FILE = $testKeyFile
-        Write-Verbose "Auto-configured SOPS_AGE_KEY_FILE: $testKeyFile"
+        Write-Verbose "Configured test-isolated SOPS_AGE_KEY_FILE: $testKeyFile"
+    }
+    else {
+        throw "Test key file not found: $testKeyFile"
     }
 
-    # Create test vault with nested structure (shared across all Describe blocks)
-    $script:TestVaultName = 'SopsNamespaceTestVault'
-    $testRoot = Join-Path ([System.IO.Path]::GetTempPath()) "sops-test-$(New-Guid)"
-    $script:TestSecretsPath = Join-Path $testRoot 'secrets'
+    # Create test vault with nested structure using TestDrive for automatic cleanup
+    $script:TestSecretsPath = Join-Path $TestDrive 'secrets'
 
     # Create directory structure
     $dirs = @(
@@ -122,33 +133,29 @@ stringData:
         }
     }
 
-    # Register vault with RelativePath naming strategy
-    try {
-        Unregister-SecretVault -Name $script:TestVaultName -ErrorAction SilentlyContinue
-    }
- catch {}
-
-    Register-SecretVault -Name $script:TestVaultName -ModuleName $modulePath -VaultParameters @{
+    # Register vault with RelativePath naming strategy using isolated helper
+    $script:TestVaultName = New-IsolatedTestVault -BaseName 'SopsNamespaceTest' -ModulePath $modulePath -VaultParameters @{
         Path           = $script:TestSecretsPath
         FilePattern    = '*.yaml'
         Recurse        = $true
         NamingStrategy = 'RelativePath'
     }
-
-    # Verify vault was registered successfully
-    $registeredVault = Get-SecretVault -Name $script:TestVaultName -ErrorAction SilentlyContinue
-    if (-not $registeredVault) {
-        throw "Failed to register test vault: $script:TestVaultName"
-    }
+    Write-Verbose "Registered isolated test vault: $script:TestVaultName"
 }
 
 AfterAll {
+    # Unregister vault with retry logic
     if ($script:TestVaultName) {
-        Unregister-SecretVault -Name $script:TestVaultName -ErrorAction SilentlyContinue
+        Remove-IsolatedTestVault -VaultName $script:TestVaultName
     }
-    if ($script:TestSecretsPath -and (Test-Path $script:TestSecretsPath)) {
-        Remove-Item -Path (Split-Path $script:TestSecretsPath -Parent) -Recurse -Force -ErrorAction SilentlyContinue
+
+    # Restore original environment state
+    if ($script:OriginalEnvironment) {
+        Restore-SopsEnvironment -State $script:OriginalEnvironment
     }
+
+    # TestDrive cleanup happens automatically via Pester
+    # No need to manually remove $script:TestSecretsPath
 }
 
 Describe 'Namespace Extraction' -Tag 'Namespace', 'Unit' {

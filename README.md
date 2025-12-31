@@ -11,8 +11,8 @@ SecretManagement.Sops enables PowerShell developers to work with SOPS-encrypted 
 - **Native PowerShell Integration**: Use `Get-Secret` and other SecretManagement cmdlets with SOPS
 - **Namespace Support**: Folder-based namespacing with collision detection for duplicate secret names
 - **Multiple Encryption Backends**: Supports Azure Key Vault, age, AWS KMS, GCP KMS, and PGP
-- **FluxCD Compatible**: Works alongside existing SOPS and FluxCD workflows
-- **Cross-Platform**: Windows PowerShell 5.1 and PowerShell 7+ on Windows, Linux, and macOS
+- **Flexible Filtering**: Filter secrets by pattern and encryption status for controlled secret access
+
 
 ## Table of Contents
 
@@ -21,8 +21,8 @@ SecretManagement.Sops enables PowerShell developers to work with SOPS-encrypted 
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Vault Parameters](#vault-parameters)
-- [Kubernetes Secret Support](#kubernetes-secret-support)
 - [Namespace Support and Collision Detection](#namespace-support-and-collision-detection)
+- [Filtering and Encryption Control](#filtering-and-encryption-control)
 - [Write Operations](#write-operations)
 - [Troubleshooting](#troubleshooting)
 - [Current Limitations](#current-limitations)
@@ -143,25 +143,11 @@ $dbPassword = Get-Secret -Name 'database/password' -Vault 'GitOpsSecrets'
 # Get as plain text (use with caution!)
 $apiKey = Get-Secret -Name 'api/key' -Vault 'GitOpsSecrets' -AsPlainText
 
-# Get a Kubernetes Secret data key
-$licenseKey = Get-Secret -Name 'software-license/license-key' -Vault 'GitOpsSecrets' -AsPlainText
-
-# Get full Kubernetes Secret manifest
-$manifest = Get-Secret -Name 'software-license' -Vault 'GitOpsSecrets' -AsPlainText
+# Get YAML content (returns raw YAML string)
+$yamlContent = Get-Secret -Name 'config/settings' -Vault 'GitOpsSecrets' -AsPlainText
+# Parse with your preferred YAML parser (e.g., powershell-yaml module)
 ```
 
-### PSCredential Support
-
-If a secret has `username` and `password` keys, it's automatically returned as a `PSCredential`:
-
-```powershell
-# YAML file contains:
-# username: admin
-# password: MyPassword123
-
-$cred = Get-Secret -Name 'admin-credentials' -Vault 'GitOpsSecrets'
-$cred.UserName  # Returns: admin
-```
 
 ## Vault Parameters
 
@@ -170,10 +156,11 @@ Configure vault behavior with these parameters:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `Path` | String | **Required** | Directory containing SOPS-encrypted files |
-| `FilePattern` | String | `*.yaml` | File pattern to match (e.g., `*.yml`, `*.json`) |
+| `FilePattern` | String | `*.yaml` | File pattern to match (e.g., `*.yml`) |
 | `Recurse` | Boolean | `$false` | Search subdirectories recursively |
-| `NamingStrategy` | String | `RelativePath` | How to name secrets: `RelativePath`, `FileName`, or `KubernetesMetadata` |
-| `KubernetesMode` | Boolean | `$true` | Enable Kubernetes Secret detection and intelligent filtering |
+| `NamingStrategy` | String | `RelativePath` | How to name secrets: `RelativePath` or `FileName` |
+| `AgeKeyFile` | String | `$null` | Path to age key file (overrides `SOPS_AGE_KEY_FILE` environment variable) |
+| `RequireEncryption` | Boolean | `$false` | Only include SOPS-encrypted files; exclude plaintext files |
 
 ### Naming Strategies
 
@@ -189,13 +176,6 @@ File: C:\secrets\nested\deep\config.yaml
 Secret Name: config
 ```
 
-**KubernetesMetadata**
-```
-File: C:\secrets\app\secret.yaml
-K8s metadata.name: my-app-secret
-Secret Name: my-app-secret
-```
-
 ### Example: Custom Configuration
 
 ```powershell
@@ -203,50 +183,10 @@ Register-SecretVault -Name 'ProductionSecrets' -ModuleName 'SecretManagement.Sop
     Path = 'C:\repos\infra\secrets\production'
     FilePattern = '*.yaml'
     Recurse = $true
-    NamingStrategy = 'KubernetesMetadata'
-    KubernetesMode = $true
+    NamingStrategy = 'RelativePath'
+    RequireEncryption = $true  # Only include SOPS-encrypted files
 }
 ```
-
-## Kubernetes Secret Support
-
-SecretManagement.Sops provides special handling for Kubernetes Secret manifests:
-
-### Example Kubernetes Secret (SOPS-encrypted)
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: software-license
-  namespace: myapp
-type: Opaque
-stringData:
-  license-key: ENC[AES256_GCM,data:...,iv:...,tag:...,type:str]
-  admin-password: ENC[AES256_GCM,data:...,iv:...,tag:...,type:str]
-sops:
-  # SOPS metadata...
-```
-
-### Accessing Kubernetes Secrets
-
-The module intelligently filters Kubernetes Secrets based on your `.sops.yaml` configuration. For example, with `encrypted_regex: ^(data|stringData)$`, only the actual secret data is returned:
-
-```powershell
-# Get secret data (returns only encrypted fields based on .sops.yaml)
-$secretData = Get-Secret -Name 'software-license' -Vault 'GitOpsSecrets' -AsPlainText
-
-# Returns a hashtable with just the secret keys:
-# @{
-#   'license-key' = 'MC2L1C3NS3K3Y'
-#   'admin-password' = 'SuperSecret123'
-# }
-
-# Access individual keys from the returned hashtable
-$licenseKey = $secretData['license-key']
-```
-
-**Important**: Configure `.sops.yaml` with `encrypted_regex: ^(data|stringData)$` to encrypt only the secret data, not the Kubernetes metadata fields.
 
 ## Namespace Support and Collision Detection
 
@@ -290,7 +230,7 @@ $db = Get-Secret -Name 'database/postgres' -Vault 'GitOpsSecrets' -AsPlainText
 $apiKey = Get-Secret -Name 'api-key' -Vault 'GitOpsSecrets' -AsPlainText
 ```
 
-### Short Name Access (Backward Compatible)
+### Short Name Access
 
 When no namespace collisions exist, you can use short names:
 
@@ -350,17 +290,77 @@ $info.Metadata.ShortName      # secret
 $info.Metadata.FilePath       # C:\secrets\apps\foo\bar\dv1\secret.yaml
 ```
 
-### Kubernetes Secrets with Namespaces
+### YAML Secrets with Namespaces
 
-Kubernetes secrets work seamlessly with namespace support:
+YAML secrets work seamlessly with namespace support:
 
 ```powershell
-# Get full K8s secret (returns hashtable with all data keys)
-$k8s = Get-Secret -Name 'apps/foo/bar/dv1/myapp' -Vault 'GitOpsSecrets' -AsPlainText
-$k8s.stringData.Keys  # Lists: license-key, config, etc.
+# Get YAML content (returns raw YAML string)
+$yamlContent = Get-Secret -Name 'apps/foo/bar/dv1/config' -Vault 'GitOpsSecrets' -AsPlainText
 
-# Extract specific data key
-$license = Get-Secret -Name 'apps/foo/bar/dv1/myapp/license-key' -Vault 'GitOpsSecrets' -AsPlainText
+# Parse with powershell-yaml if you need structured data
+# Install-Module -Name powershell-yaml
+# $parsed = ConvertFrom-Yaml $yamlContent
+```
+
+## Filtering and Encryption Control
+
+### RequireEncryption Parameter
+
+The `RequireEncryption` vault parameter provides security by ensuring only SOPS-encrypted files are accessible through the vault. This is especially useful when storing both encrypted secrets and plaintext configuration files in the same directory structure.
+
+**How it works:**
+- Excludes files without SOPS metadata
+- Respects `.sops.yaml` configuration (excludes files matching `unencrypted_suffix` patterns)
+- Provides an additional security layer to prevent accidental exposure of plaintext files
+
+**Example: Onboarding a Vault with Encryption Filtering**
+
+```powershell
+# Scenario: You have a mixed directory with both encrypted secrets and plaintext configs
+# Directory structure:
+#   C:\repos\config\
+#     ├── database.yaml (SOPS-encrypted)
+#     ├── api-keys.yaml (SOPS-encrypted)
+#     ├── readme.txt (plaintext)
+#     └── template.yaml (plaintext, matches unencrypted_suffix in .sops.yaml)
+
+# Register vault with encryption filtering enabled
+Register-SecretVault -Name 'SecureSecrets' -ModuleName 'SecretManagement.Sops' -VaultParameters @{
+    Path = 'C:\repos\config'
+    FilePattern = '*.yaml'
+    Recurse = $true
+    RequireEncryption = $true  # Only include SOPS-encrypted files
+}
+
+# List secrets - only encrypted files appear
+Get-SecretInfo -Vault 'SecureSecrets'
+# Returns: database, api-keys
+# Excludes: readme.txt (doesn't match *.yaml), template.yaml (plaintext)
+```
+
+**Use cases:**
+- **Production vaults**: Ensure only encrypted secrets are accessible
+- **Mixed repositories**: Work with repos containing both secrets and configuration templates
+- **Security compliance**: Prevent accidental retrieval of unencrypted files
+
+### Wildcard Filtering
+
+Filter secrets by name pattern using the `-Filter` parameter:
+
+```powershell
+# List all secrets in a specific namespace
+Get-SecretInfo -Vault 'GitOpsSecrets' -Filter 'database/*'
+
+# List secrets matching a pattern
+Get-SecretInfo -Vault 'GitOpsSecrets' -Filter 'prod-*'
+
+# Combine with RequireEncryption for secure, filtered access
+Register-SecretVault -Name 'FilteredVault' -ModuleName 'SecretManagement.Sops' -VaultParameters @{
+    Path = 'C:\secrets'
+    RequireEncryption = $true
+}
+Get-SecretInfo -Vault 'FilteredVault' -Filter 'apps/*/prod/*'
 ```
 
 ## Write Operations
@@ -382,36 +382,65 @@ Set-Secret -Name 'database/password' -Vault 'GitOpsSecrets' -Secret 'NewPassword
 $cred = Get-Credential
 Set-Secret -Name 'admin-credentials' -Vault 'GitOpsSecrets' -Secret $cred
 
-# Create a Kubernetes Secret with multiple keys
+# Set using path syntax to target specific YAML field
+Set-Secret -Name 'database/config' -Vault 'GitOpsSecrets' -Secret '.password: "NewPassword123!"'
+
+# Multi-line YAML for complex structures
+$yamlContent = @'
+stringData:
+  license-key: ABC-123-DEF-456
+  config.json: '{"setting": "value"}'
+'@
+Set-Secret -Name 'app/config' -Vault 'GitOpsSecrets' -Secret $yamlContent
+
+# Set a hashtable (converts to YAML structure)
 $secretData = @{
     'license-key' = 'ABC-123-DEF-456'
-    'config.json' = '{"setting": "value"}'
+    'config' = @{ setting = 'value' }
 }
-Set-Secret -Name 'app/config' -Vault 'GitOpsSecrets' -Secret $secretData
+Set-Secret -Name 'app/settings' -Vault 'GitOpsSecrets' -Secret $secretData
 ```
 
 **How it works:**
-- **Existing files**: Uses a patch-first approach with `sops set` to preserve file structure and comments
-- **New secrets**: Creates new SOPS-encrypted YAML files with appropriate encryption configuration
-- **Kubernetes Secrets**: Automatically detects and properly structures Kubernetes Secret manifests
+
+**For existing files:**
+- Uses a patch-first approach with `sops --set` to preserve file structure and comments
+- String secrets support three input modes:
+  1. **Path syntax**: `.stringData.password: newValue` - Updates specific nested field
+  2. **Multi-line YAML**: Entire YAML structure - Patches multiple fields
+  3. **Plain string**: Simple value - Wraps in `{value: ...}` structure
+
+**For new secrets:**
+- Creates plaintext YAML at temporary `.insecure.yaml` path
+- Encrypts in-place with SOPS from vault root (respects `.sops.yaml` path_regex)
+- Deletes temporary unencrypted file
+
+**Supported secret types:**
+- `String` (plain text, path syntax, or YAML content)
+- `SecureString` (converted to plaintext)
+- `PSCredential` (converted to `{username: ..., password: ...}`)
+- `Hashtable` (converted to YAML structure)
+- `Byte[]` (converted to base64)
 
 ### Remove-Secret (Delete)
 
 Use `Remove-Secret` to delete secrets:
 
 ```powershell
-# Delete a simple secret (deletes the entire file)
+# Delete a secret (removes the entire YAML file)
 Remove-Secret -Name 'api/old-key' -Vault 'GitOpsSecrets'
 
-# Delete a specific key from a Kubernetes Secret
-Remove-Secret -Name 'app/config/old-setting' -Vault 'GitOpsSecrets'
+# Delete a namespaced secret
+Remove-Secret -Name 'apps/foo/config' -Vault 'GitOpsSecrets'
 ```
 
 **Important Notes:**
-- Deleting a simple secret removes the entire YAML file
-- For Kubernetes Secrets with multiple data keys, only the specified key is removed
-- The file remains SOPS-encrypted after updates
-- Original file structure and comments are preserved when possible
+- `Remove-Secret` **always deletes the entire YAML file** - it does not support removing individual keys
+- To remove specific keys from structured YAML, use `Set-Secret` with path syntax:
+  ```powershell
+  # Remove a specific field from a YAML file
+  Set-Secret -Name 'config' -Vault 'GitOpsSecrets' -Secret '.stringData.old-key: null'
+  ```
 
 ## Troubleshooting
 
@@ -486,15 +515,18 @@ Add-Content $PROFILE "`n`$env:SOPS_AGE_KEY_FILE = 'C:\Users\YourName\.sops\key.t
 - **YAML Only**: JSON and dotenv format support planned for future releases
 - **No Caching**: Every operation invokes the SOPS binary (may impact performance for large vaults)
 - **No Unlock-SecretVault**: Credential pre-caching not yet implemented
+- **String Return Type**: Get-Secret returns raw YAML strings; users must parse with their preferred YAML parser
+- **File-Level Deletion**: Remove-Secret deletes entire files; use Set-Secret with path syntax to remove individual keys
 
 ## Roadmap
 
 ### Completed Features (v0.3.0)
 - ✅ Full read/write support (Get-Secret, Set-Secret, Remove-Secret)
-- ✅ Kubernetes Secret manifest support
+- ✅ Generic YAML secret support (no Kubernetes-specific parsing)
 - ✅ Namespace support with collision detection
-- ✅ Multiple naming strategies (RelativePath, FileName, KubernetesMetadata)
+- ✅ Multiple naming strategies (RelativePath, FileName)
 - ✅ Multiple encryption backends (Azure KV, age, AWS KMS, GCP KMS, PGP)
+- ✅ Encryption filtering with RequireEncryption parameter
 
 ### Planned Features
 - **Enhanced Format Support**: JSON and dotenv file formats
@@ -554,6 +586,21 @@ $akvSecret = Get-Secret -Name 'api-key' -Vault 'AzureKeyVault' -AsPlainText
 if ($sopsSecret -ne $akvSecret) {
     Write-Warning "Secret drift detected for 'api-key'!"
 }
+```
+
+### Example 5: Parse YAML Secrets
+
+```powershell
+# Get-Secret returns raw YAML strings - parse with powershell-yaml for structured access
+Install-Module -Name powershell-yaml -Scope CurrentUser
+
+# Get and parse a complex YAML secret
+$yamlContent = Get-Secret -Name 'app/config' -Vault 'GitOpsSecrets' -AsPlainText
+$config = ConvertFrom-Yaml $yamlContent
+
+# Access structured data
+$dbPassword = $config.database.password
+$apiKeys = $config.stringData.Keys
 ```
 
 ## Contributing

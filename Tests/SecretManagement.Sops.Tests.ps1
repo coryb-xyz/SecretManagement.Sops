@@ -1,12 +1,39 @@
 ﻿#Requires -Modules @{ ModuleName='Pester'; ModuleVersion='5.0.0' }
 
 BeforeAll {
+    # Import test helpers for isolation utilities
+    $testHelpersPath = Join-Path $PSScriptRoot 'TestHelpers.psm1'
+    Import-Module $testHelpersPath -Force
+
+    # Clean up any orphaned test vaults from previous runs
+    Remove-OrphanedTestVaults
+
+    # Save original environment state
+    $script:OriginalEnvironment = Save-SopsEnvironment
+
     # Import the main module
     $modulePath = Join-Path $PSScriptRoot '..\SecretManagement.Sops\SecretManagement.Sops.psd1'
     Import-Module $modulePath -Force
 
     # Test data directory
     $script:TestDataPath = Join-Path $PSScriptRoot 'TestData'
+
+    # Configure test-specific age key in isolated environment
+    $testKeyFile = Join-Path $script:TestDataPath 'test-key.txt'
+    if (Test-Path $testKeyFile) {
+        $env:SOPS_AGE_KEY_FILE = $testKeyFile
+        Write-Verbose "Configured test-isolated SOPS_AGE_KEY_FILE: $testKeyFile"
+    }
+    else {
+        Write-Warning "Test key file not found: $testKeyFile. Some tests may fail."
+    }
+}
+
+AfterAll {
+    # Restore original environment state
+    if ($script:OriginalEnvironment) {
+        Restore-SopsEnvironment -State $script:OriginalEnvironment
+    }
 }
 
 Describe 'Module Import' -Tag 'ReadSupport', 'Unit' {
@@ -110,28 +137,23 @@ Describe 'Integration Tests' -Tag 'ReadSupport', 'Integration', 'RequiresSops' {
             # Import SecretManagement module
             Import-Module Microsoft.PowerShell.SecretManagement -Force
 
-            # Register test vault
-            $vaultName = 'SopsTestVault'
+            # Configure test environment with AGE key
+            $env:SOPS_AGE_KEY_FILE = $testKeyFile
+
+            # Register test vault with unique isolated name
             $modulePath = Join-Path $PSScriptRoot '..' 'SecretManagement.Sops'
-
-            try {
-                Unregister-SecretVault -Name $vaultName -ErrorAction SilentlyContinue
-            }
- catch {}
-
-            Register-SecretVault -Name $vaultName -ModuleName $modulePath -VaultParameters @{
+            $script:VaultName = New-IsolatedTestVault -BaseName 'SopsMainTest' -ModulePath $modulePath -VaultParameters @{
                 Path        = $script:TestDataPath
                 FilePattern = '*.yaml'
                 Recurse     = $false
                 AgeKeyFile  = $testKeyFile
             }
-
-            $script:VaultName = $vaultName
+            Write-Verbose "Registered isolated test vault: $script:VaultName"
         }
 
         AfterAll {
             if ($script:VaultName) {
-                Unregister-SecretVault -Name $script:VaultName -ErrorAction SilentlyContinue
+                Remove-IsolatedTestVault -VaultName $script:VaultName
             }
         }
 
