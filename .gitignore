@@ -3,11 +3,18 @@ Tests/TestData/test-key.txt
 Tests/TestData/*.key
 Tests/TestData/*.pem
 
-# Encrypted test files (optional - can be regenerated)
-Tests/TestData/simple-secret.yaml
-Tests/TestData/k8s-secret.yaml
-Tests/TestData/credentials.yaml
+# Auto-generated SOPS config
 Tests/TestData/.sops.yaml
+
+# Auto-generated encrypted files (created from *-plain.yaml sources during test initialization)
+# We only check in the *-plain.yaml source files
+# Ignore all YAML files in TestData and subdirectories...
+Tests/TestData/**/*.yaml
+# ...but keep the plain source files
+!Tests/TestData/**/*-plain.yaml
+# ...and keep the special test files (not encrypted, used for edge case testing)
+!Tests/TestData/config_unencrypted.yaml
+!Tests/TestData/fake-sops.yaml
 
 # PowerShell
 *.ps1xml

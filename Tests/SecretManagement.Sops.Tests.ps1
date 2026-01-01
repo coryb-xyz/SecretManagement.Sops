@@ -11,6 +11,9 @@ BeforeAll {
     # Save original environment state
     $script:OriginalEnvironment = Save-SopsEnvironment
 
+    # Remove any existing module instances to prevent InModuleScope conflicts
+    Get-Module 'SecretManagement.Sops' | Remove-Module -Force -ErrorAction SilentlyContinue
+
     # Import the main module
     $modulePath = Join-Path $PSScriptRoot '..\SecretManagement.Sops\SecretManagement.Sops.psd1'
     Import-Module $modulePath -Force
@@ -214,12 +217,6 @@ Describe 'Integration Tests' -Tag 'ReadSupport', 'Integration', 'RequiresSops' {
 }
 
 Describe 'Error Handling' -Tag 'ReadSupport', 'Unit' {
-    BeforeAll {
-        # Import module for mocking
-        $modulePath = Join-Path $PSScriptRoot '..\SecretManagement.Sops\SecretManagement.Sops.psd1'
-        Import-Module $modulePath -Force
-    }
-
     It 'Provides helpful error for missing SOPS binary' {
         InModuleScope 'SecretManagement.Sops' {
             Mock Test-SopsAvailable { return $false }

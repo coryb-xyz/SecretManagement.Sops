@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: myapp-secret
+  namespace: default
+type: Opaque
+stringData:
+  app_key: myapp-secret-key
+  app_token: myapp-token-xyz

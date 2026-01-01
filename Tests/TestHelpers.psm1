@@ -756,6 +756,68 @@ function Remove-OrphanedTestVaults {
     }
 }
 
+<#
+.SYNOPSIS
+    Initializes test data if missing by running the setup script
+
+.PARAMETER Force
+    Force re-initialization even if test data exists
+
+.OUTPUTS
+    Boolean - True if test data is ready, False if prerequisites missing
+
+.EXAMPLE
+    if (Initialize-TestDataIfMissing) {
+        # Test data ready, proceed with tests
+    }
+#>
+function Initialize-TestDataIfMissing {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter()]
+        [switch]$Force
+    )
+
+    $testDataPath = Join-Path $PSScriptRoot 'TestData'
+    $testKeyFile = Join-Path $testDataPath 'test-key.txt'
+    $setupScript = Join-Path $testDataPath 'Initialize-SopsTestEnvironment.ps1'
+
+    # Check if test data exists
+    $needsSetup = $Force -or (-not (Test-Path $testKeyFile))
+
+    if ($needsSetup) {
+        # Check prerequisites
+        $sopsAvailable = $null -ne (Get-Command 'sops' -ErrorAction SilentlyContinue)
+        $ageAvailable = $null -ne (Get-Command 'age-keygen' -ErrorAction SilentlyContinue)
+
+        if (-not $sopsAvailable -or -not $ageAvailable) {
+            $message = @"
+Missing test prerequisites. Please install:
+- SOPS: https://github.com/getsops/sops/releases
+- age: https://github.com/FiloSottile/age/releases
+
+Or skip tests requiring these tools.
+"@
+            Write-Warning $message
+            return $false
+        }
+
+        # Run setup script
+        Write-Verbose "Initializing test data..."
+        try {
+            & $setupScript -ErrorAction Stop
+            return $true
+        }
+        catch {
+            Write-Warning "Failed to initialize test data: $_"
+            return $false
+        }
+    }
+
+    return $true
+}
+
 # Export all functions
 Export-ModuleMember -Function @(
     'Test-SopsEncrypted'
@@ -773,4 +835,5 @@ Export-ModuleMember -Function @(
     'New-IsolatedTestVault'
     'Remove-IsolatedTestVault'
     'Remove-OrphanedTestVaults'
+    'Initialize-TestDataIfMissing'
 )

@@ -50,6 +50,16 @@ BeforeAll {
     if (Test-Path $testKeyFile) {
         $env:SOPS_AGE_KEY_FILE = $testKeyFile
         Write-Verbose "Configured test-isolated SOPS_AGE_KEY_FILE: $testKeyFile"
+
+        # Extract public key from test key file for use in .sops.yaml
+        $publicKeyLine = Get-Content $testKeyFile | Select-Object -Skip 1 -First 1
+        if ($publicKeyLine -match 'public key:\s*(.+)') {
+            $script:TestAgePublicKey = $matches[1].Trim()
+            Write-Verbose "Extracted AGE public key: $script:TestAgePublicKey"
+        }
+        else {
+            throw "Failed to extract public key from $testKeyFile"
+        }
     }
     else {
         throw "Test key file not found: $testKeyFile"
@@ -70,12 +80,12 @@ BeforeAll {
         New-Item -Path (Join-Path $script:TestSecretsPath $dir) -ItemType Directory -Force | Out-Null
     }
 
-    # Create .sops.yaml config file for encryption
-    $sopsConfig = @'
+    # Create .sops.yaml config file for encryption using the extracted public key
+    $sopsConfig = @"
 creation_rules:
   - path_regex: \.yaml$
-    age: age1d0w0phf6glwkgzvjr7mk0exc3vju3rcxlgrladpntc0uq4tp7ulsw3g6ty
-'@
+    age: $script:TestAgePublicKey
+"@
     $sopsConfig | Set-Content (Join-Path $script:TestSecretsPath '.sops.yaml')
 
     # Create test secret files (SOPS-encrypted)
