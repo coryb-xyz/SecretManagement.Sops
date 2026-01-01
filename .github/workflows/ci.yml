@@ -20,61 +20,31 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install SOPS (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $version = '3.11.0'
-          $url = "https://github.com/getsops/sops/releases/download/v$version/sops-v$version.exe"
-          Write-Host "Downloading SOPS from $url"
-          Invoke-WebRequest -Uri $url -OutFile sops.exe
-          $installDir = "$env:USERPROFILE\bin"
-          New-Item -ItemType Directory -Force -Path $installDir | Out-Null
-          Move-Item sops.exe "$installDir\sops.exe" -Force
-          echo "$installDir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          Write-Host "SOPS installed to $installDir"
+      - name: Install SOPS
+        uses: getsops/sops-action@v1
+        with:
+          version: '3.11.0'
 
-      - name: Install age (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $version = 'v1.2.1'
-          $url = "https://github.com/FiloSottile/age/releases/download/$version/age-$version-windows-amd64.zip"
-          Write-Host "Downloading age from $url"
-          Invoke-WebRequest -Uri $url -OutFile age.zip
-          Expand-Archive age.zip -DestinationPath .
-          $installDir = "$env:USERPROFILE\bin"
-          New-Item -ItemType Directory -Force -Path $installDir | Out-Null
-          Move-Item age\*.exe $installDir\ -Force
-          echo "$installDir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          Write-Host "age installed to $installDir"
-
-      - name: Install SOPS (Linux)
-        if: runner.os == 'Linux'
+      - name: Install age
         shell: bash
         run: |
-          VERSION='3.11.0'
-          URL="https://github.com/getsops/sops/releases/download/v${VERSION}/sops-v${VERSION}.linux.amd64"
-          echo "Downloading SOPS from $URL"
-          curl -LO "$URL"
-          chmod +x "sops-v${VERSION}.linux.amd64"
-          sudo mv "sops-v${VERSION}.linux.amd64" /usr/local/bin/sops
-          echo "SOPS installed to /usr/local/bin/sops"
-          sops --version
+          # age doesn't have an official action, so install manually
+          VERSION='1.2.1'
 
-      - name: Install age (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          VERSION='v1.2.1'
-          URL="https://github.com/FiloSottile/age/releases/download/${VERSION}/age-${VERSION}-linux-amd64.tar.gz"
-          echo "Downloading age from $URL"
-          curl -LO "$URL"
-          tar xzf "age-${VERSION}-linux-amd64.tar.gz"
-          sudo mv age/age /usr/local/bin/
-          sudo mv age/age-keygen /usr/local/bin/
-          echo "age installed to /usr/local/bin"
-          age --version
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            URL="https://github.com/FiloSottile/age/releases/download/v${VERSION}/age-v${VERSION}-linux-amd64.tar.gz"
+            curl -LO "$URL"
+            tar xzf "age-v${VERSION}-linux-amd64.tar.gz"
+            sudo mv age/age /usr/local/bin/
+            sudo mv age/age-keygen /usr/local/bin/
+          elif [[ "$RUNNER_OS" == "Windows" ]]; then
+            URL="https://github.com/FiloSottile/age/releases/download/v${VERSION}/age-v${VERSION}-windows-amd64.zip"
+            curl -LO "$URL"
+            unzip "age-v${VERSION}-windows-amd64.zip"
+            mkdir -p "$HOME/bin"
+            mv age/*.exe "$HOME/bin/"
+            echo "$HOME/bin" >> $GITHUB_PATH
+          fi
 
       - name: Verify SOPS and age installation
         shell: pwsh
@@ -134,7 +104,16 @@ jobs:
       - name: Run build
         shell: pwsh
         run: |
+          # Run build and capture exit code
           pwsh -nop -c '.\build.ps1 -Task Build'
+          $exitCode = $LASTEXITCODE
+
+          if ($exitCode -ne 0) {
+            Write-Error "Build failed with exit code $exitCode"
+            exit $exitCode
+          }
+
+          Write-Host "Build completed successfully"
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
