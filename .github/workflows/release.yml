@@ -1,18 +1,63 @@
-name: CI
+name: Release
 
 on:
   push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
-  workflow_dispatch:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
 
 jobs:
-  test:
-    name: Test on ${{ matrix.os }}
+  validate:
+    name: Validate tag and manifest version
+    runs-on: ubuntu-latest
+    outputs:
+      tag_version: ${{ steps.extract.outputs.tag_version }}
+      manifest_version: ${{ steps.extract.outputs.manifest_version }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract versions
+        id: extract
+        shell: pwsh
+        run: |
+          # Extract tag version (remove 'v' prefix)
+          $tagVersion = "${{ github.ref_name }}" -replace '^v', ''
+          echo "tag_version=$tagVersion" >> $env:GITHUB_OUTPUT
+
+          # Extract manifest version
+          $manifestPath = 'SecretManagement.Sops/SecretManagement.Sops.psd1'
+          $manifest = Import-PowerShellDataFile -Path $manifestPath
+          $manifestVersion = $manifest.ModuleVersion
+          echo "manifest_version=$manifestVersion" >> $env:GITHUB_OUTPUT
+
+          # Display for debugging
+          Write-Host "Tag version: $tagVersion"
+          Write-Host "Manifest version: $manifestVersion"
+
+      - name: Validate versions match
+        shell: pwsh
+        run: |
+          $tagVersion = "${{ steps.extract.outputs.tag_version }}"
+          $manifestVersion = "${{ steps.extract.outputs.manifest_version }}"
+
+          if ($tagVersion -ne $manifestVersion) {
+            Write-Error "Version mismatch: tag is v$tagVersion but manifest is $manifestVersion"
+            Write-Error "Please update the manifest version to match the tag, or create a tag matching the manifest version."
+            exit 1
+          }
+
+          Write-Host "✓ Tag version matches manifest version: $tagVersion"
+
+  build-and-test:
+    name: Build and test on ${{ matrix.os }}
+    needs: validate
     runs-on: ${{ matrix.os }}
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         os: [windows-latest, ubuntu-latest]
 
@@ -24,7 +69,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $version = '3.11.0'
+          $version = '3.9.2'
           $url = "https://github.com/getsops/sops/releases/download/v$version/sops-v$version.exe"
           Write-Host "Downloading SOPS from $url"
           Invoke-WebRequest -Uri $url -OutFile sops.exe
@@ -38,7 +83,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $version = 'v1.2.1'
+          $version = 'v1.2.0'
           $url = "https://github.com/FiloSottile/age/releases/download/$version/age-$version-windows-amd64.zip"
           Write-Host "Downloading age from $url"
           Invoke-WebRequest -Uri $url -OutFile age.zip
@@ -53,7 +98,7 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          VERSION='3.11.0'
+          VERSION='3.9.2'
           URL="https://github.com/getsops/sops/releases/download/v${VERSION}/sops-v${VERSION}.linux.amd64"
           echo "Downloading SOPS from $URL"
           curl -LO "$URL"
@@ -66,7 +111,7 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          VERSION='v1.2.1'
+          VERSION='v1.2.0'
           URL="https://github.com/FiloSottile/age/releases/download/${VERSION}/age-${VERSION}-linux-amd64.tar.gz"
           echo "Downloading age from $URL"
           curl -LO "$URL"
@@ -136,16 +181,75 @@ jobs:
         run: |
           pwsh -nop -c '.\build.ps1 -Task Build'
 
-      - name: Upload test results
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: test-results-${{ matrix.os }}
-          path: TestResults.xml
-
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
-        if: success()
         with:
           name: module-${{ matrix.os }}
           path: Build/SecretManagement.Sops/
+          retention-days: 1
+
+  create-release:
+    name: Create GitHub Release
+    needs: [validate, build-and-test]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Windows build
+        uses: actions/download-artifact@v4
+        with:
+          name: module-windows-latest
+          path: release-artifacts/SecretManagement.Sops
+
+      - name: Create release archive
+        shell: pwsh
+        run: |
+          $version = "${{ needs.validate.outputs.tag_version }}"
+          $archiveName = "SecretManagement.Sops-v$version.zip"
+
+          # Create zip from Windows build (compatible with Import-Module)
+          Compress-Archive -Path release-artifacts/SecretManagement.Sops -DestinationPath $archiveName
+
+          Write-Host "Created release archive: $archiveName"
+          echo "ARCHIVE_NAME=$archiveName" >> $env:GITHUB_ENV
+
+      - name: Generate release notes
+        id: release_notes
+        shell: pwsh
+        run: |
+          $version = "${{ needs.validate.outputs.tag_version }}"
+
+          # Extract release notes from CHANGELOG.md
+          if (Test-Path CHANGELOG.md) {
+            $changelog = Get-Content CHANGELOG.md -Raw
+
+            # Try to find version section (supports both ## [X.Y.Z] and ## X.Y.Z formats)
+            $pattern = "(?ms)^## \[?$([regex]::Escape($version))\]?[^\r\n]*[\r\n]+(.*?)(?=^## |\z)"
+
+            if ($changelog -match $pattern) {
+              $notes = $matches[1].Trim()
+              Write-Host "Found release notes in CHANGELOG.md for version $version"
+            } else {
+              $notes = "Release $version`n`nSee [CHANGELOG.md](CHANGELOG.md) for details."
+              Write-Host "Version $version not found in CHANGELOG.md, using default notes"
+            }
+          } else {
+            $notes = "Release $version"
+            Write-Host "CHANGELOG.md not found, using minimal release notes"
+          }
+
+          # Output to file for multiline content
+          $notes | Out-File -FilePath release-notes.md -Encoding utf8
+          echo "NOTES_FILE=release-notes.md" >> $env:GITHUB_ENV
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          body_path: release-notes.md
+          files: ${{ env.ARCHIVE_NAME }}
+          draft: false
+          prerelease: false
