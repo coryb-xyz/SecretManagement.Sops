@@ -235,6 +235,25 @@ task Test {
     # Dependencies are automatically installed via PreToolUse hook (see CLAUDE.md)
     # To manually install dependencies, run: .\Install-SopsVaultDependencies.ps1
 
+    # Bootstrap test data if missing (auto-generates encrypted test files)
+    $testKeyFile = Join-Path $PSScriptRoot 'Tests\TestData\test-key.txt'
+    if (-not (Test-Path $testKeyFile)) {
+        Write-Build Yellow 'TestData not found - running setup script...'
+        $setupScript = Join-Path $PSScriptRoot 'Tests\TestData\Initialize-SopsTestEnvironment.ps1'
+
+        # Check if SOPS and age are available
+        $sopsAvailable = $null -ne (Get-Command 'sops' -ErrorAction SilentlyContinue)
+        $ageAvailable = $null -ne (Get-Command 'age-keygen' -ErrorAction SilentlyContinue)
+
+        if ($sopsAvailable -and $ageAvailable) {
+            & $setupScript -ErrorAction Stop
+            Write-Build Green 'TestData initialized successfully'
+        } else {
+            Write-Build Yellow 'SOPS or age not found - tests requiring encryption will fail'
+            Write-Build Yellow 'Install from: https://github.com/getsops/sops/releases and https://github.com/FiloSottile/age/releases'
+        }
+    }
+
     $pesterConfig = New-PesterConfiguration
     $pesterConfig.Run.Path = $TestsPath
     $pesterConfig.Run.Exit = $false

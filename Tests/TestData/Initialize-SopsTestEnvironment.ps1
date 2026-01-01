@@ -266,41 +266,42 @@ else {
 }
 
 # Step 4: Create Sample Secrets
-Write-Step "Step 4: Creating sample secrets"
+Write-Step "Step 4: Verifying test data files exist"
 
 if ($Mode -eq 'UnitTest') {
-    # Minimal test secrets for unit tests
-    $secrets = @{
-        'simple-secret-plain.yaml' = @'
-username: admin
-password: supersecret123
-api_key: abc123xyz
-'@
-        'k8s-secret-plain.yaml'    = @'
-apiVersion: v1
-kind: Secret
-metadata:
-  name: my-secret
-  namespace: default
-type: Opaque
-stringData:
-  db_host: postgres.example.com
-  db_user: dbadmin
-  db_pass: SecurePass456!
-'@
-        'credentials-plain.yaml'   = @'
-aws:
-  access_key: AKIAIOSFODNN7EXAMPLE
-  secret_key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
-github:
-  token: ghp_1234567890abcdefghijklmnopqrstuvwxyz
-'@
+    # In UnitTest mode, all plain YAML files should already be checked into git
+    # We just verify they exist - no need to create them
+
+    # Note: The *-plain.yaml files are the source of truth and are checked into git
+    # The Initialize script only encrypts them to create the encrypted versions
+
+    $expectedPlainFiles = @(
+        'simple-secret-plain.yaml'
+        'k8s-secret-plain.yaml'
+        'credentials-plain.yaml'
+        'api-key-plain.yaml'
+        'database\postgres-plain.yaml'
+        'apps\foo\bar\dv1\secret-plain.yaml'
+        'a\b\c\d\e\f\deep-secret-plain.yaml'
+        'env-prod\api_key-v2-plain.yaml'
+        'k8s\myapp-plain.yaml'
+        'config_unencrypted.yaml'
+        'fake-sops.yaml'
+    )
+
+    $missingFiles = @()
+    foreach ($file in $expectedPlainFiles) {
+        $fullPath = Join-Path $VaultPath $file
+        if (-not (Test-Path $fullPath)) {
+            $missingFiles += $file
+        }
+        else {
+            Write-Success "Verified: $file"
+        }
     }
 
-    foreach ($secretPath in $secrets.Keys) {
-        $fullPath = Join-Path $VaultPath $secretPath
-        $secrets[$secretPath] | Set-Content $fullPath -NoNewline
-        Write-Success "Created $secretPath"
+    if ($missingFiles.Count -gt 0) {
+        throw "Missing required test data files (should be checked into git):`n  - $($missingFiles -join "`n  - ")"
     }
 }
 else {
@@ -375,10 +376,11 @@ private-key: |
 Write-Step "Step 5: Creating SOPS configuration"
 
 if ($Mode -eq 'UnitTest') {
-    # Simple config for unit tests
+    # Simple config for unit tests (includes unencrypted_suffix for EncryptionFiltering tests)
     $sopsConfig = @"
 creation_rules:
   - path_regex: \.yaml$
+    unencrypted_suffix: _unencrypted
     age: $publicKey
 "@
 }
@@ -403,40 +405,39 @@ if (-not $SkipEncryption) {
     $env:SOPS_AGE_KEY_FILE = $keyFile
 
     if ($Mode -eq 'UnitTest') {
-        # Encrypt plain files to their non-plain counterparts
-        $filesToEncrypt = @(
-            'simple-secret-plain.yaml'
-            'k8s-secret-plain.yaml'
-            'credentials-plain.yaml'
-        )
-
         Push-Location $VaultPath
         try {
-            foreach ($file in $filesToEncrypt) {
-                $plainFile = $file
-                $encryptedFile = $file -replace '-plain\.yaml$', '.yaml'
+            # Encrypt all *-plain.yaml files to their non-plain counterparts
+            # Find all *-plain.yaml files recursively
+            $plainFiles = Get-ChildItem -Path $VaultPath -Recurse -Filter "*-plain.yaml"
 
-                if (-not (Test-Path $plainFile)) {
-                    Write-Warning "Plain file not found: $plainFile"
-                    continue
-                }
+            if ($plainFiles.Count -eq 0) {
+                throw "No *-plain.yaml files found. These should be checked into git."
+            }
 
-                $encrypted = & sops --encrypt $plainFile 2>&1
+            foreach ($plainFile in $plainFiles) {
+                $encryptedFile = $plainFile.FullName -replace '-plain\.yaml$', '.yaml'
+                $relativePlainPath = $plainFile.FullName.Substring($VaultPath.Length + 1)
+                $relativeEncryptedPath = $relativePlainPath -replace '-plain\.yaml$', '.yaml'
+
+                $encrypted = & sops --encrypt $plainFile.FullName 2>&1
                 if ($LASTEXITCODE -ne 0) {
-                    throw "SOPS encryption failed: $encrypted"
+                    throw "SOPS encryption failed for $relativePlainPath`: $encrypted"
                 }
 
                 Set-Content -Path $encryptedFile -Value $encrypted -Encoding UTF8
-                Write-Success "Encrypted: $file -> $encryptedFile"
+                Write-Success "Encrypted: $relativePlainPath -> $relativeEncryptedPath"
             }
 
-            # Verify encryption
+            # Verify encryption works
             $testFile = 'simple-secret.yaml'
-            $decrypted = & sops --decrypt $testFile 2>&1
-            if ($LASTEXITCODE -ne 0) {
-                throw "SOPS decryption verification failed: $decrypted"
+            if (Test-Path $testFile) {
+                $decrypted = & sops --decrypt $testFile 2>&1
+                if ($LASTEXITCODE -ne 0) {
+                    throw "SOPS decryption verification failed: $decrypted"
+                }
+                Write-Success "Verified encryption works"
             }
-            Write-Success "Verified encryption works"
         }
         finally {
             Pop-Location

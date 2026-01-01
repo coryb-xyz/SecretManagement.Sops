@@ -1,4 +1,14 @@
 ﻿BeforeAll {
+    # Import test helpers for isolation utilities
+    $testHelpersPath = Join-Path $PSScriptRoot 'TestHelpers.psm1'
+    Import-Module $testHelpersPath -Force
+
+    # Clean up any orphaned test vaults from previous runs
+    Remove-OrphanedTestVaults
+
+    # Save original environment state
+    $script:OriginalEnvironment = Save-SopsEnvironment
+
     # Import the module
     $modulePath = Join-Path $PSScriptRoot '..' 'SecretManagement.Sops' 'SecretManagement.Sops.psd1'
     Import-Module $modulePath -Force
@@ -17,6 +27,13 @@
 
     # Test data path
     $script:TestDataPath = Join-Path $PSScriptRoot 'TestData'
+}
+
+AfterAll {
+    # Restore original environment state
+    if ($script:OriginalEnvironment) {
+        Restore-SopsEnvironment -State $script:OriginalEnvironment
+    }
 }
 
 Describe 'Test-SopsEncrypted' -Tag 'Unit', 'EncryptionFiltering' {
