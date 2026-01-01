@@ -56,8 +56,8 @@ try {
     # Import InvokeBuild
     Import-Module InvokeBuild -Force
 
-    # Run the build
-    C:\Users\fr0ch\Documents\PowerShell\Modules\InvokeBuild\5.14.22\Invoke-Build.ps1 -Task $Task -File (Join-Path $PSScriptRoot 'SecretManagement.Sops.build.ps1')
+    # Run the build using Invoke-Build cmdlet (not hardcoded path)
+    Invoke-Build -Task $Task -File (Join-Path $PSScriptRoot 'SecretManagement.Sops.build.ps1')
 }
 finally {
     Pop-Location
