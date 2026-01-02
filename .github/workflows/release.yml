@@ -68,8 +68,8 @@ jobs:
       - name: Install SOPS and age
         shell: bash
         run: |
-          SOPS_VERSION='3.9.2'
-          AGE_VERSION='1.2.0'
+          SOPS_VERSION='3.11.0'
+          AGE_VERSION='1.2.1'
 
           if [[ "$RUNNER_OS" == "Linux" ]]; then
             echo "Installing SOPS ${SOPS_VERSION} on Linux..."
@@ -97,32 +97,11 @@ jobs:
             mv age/*.exe "$HOME/bin/"
           fi
 
-          echo "Verifying installations..."
-          sops --version
-          age --version
-
-      - name: Verify SOPS and age installation
-        shell: pwsh
-        run: |
-          Write-Host "Verifying SOPS installation..."
-          $sopsPath = Get-Command sops -ErrorAction SilentlyContinue
-          if ($sopsPath) {
-            Write-Host "✓ SOPS found at: $($sopsPath.Source)"
-            sops --version
-          } else {
-            Write-Error "✗ SOPS not found in PATH"
-            exit 1
-          }
-
-          Write-Host "`nVerifying age installation..."
-          $agePath = Get-Command age-keygen -ErrorAction SilentlyContinue
-          if ($agePath) {
-            Write-Host "✓ age-keygen found at: $($agePath.Source)"
-            age --version
-          } else {
-            Write-Error "✗ age-keygen not found in PATH"
-            exit 1
-          }
+          # Verify installations work
+          echo "Verifying SOPS and age..."
+          sops --version || exit 1
+          age --version || exit 1
+          echo "✓ SOPS and age installed successfully"
 
       - name: Generate test data
         shell: pwsh
@@ -160,16 +139,14 @@ jobs:
       - name: Run build
         shell: pwsh
         run: |
-          # Run build and capture exit code
-          pwsh -nop -c '.\build.ps1 -Task Build'
-          $exitCode = $LASTEXITCODE
+          # Run build - let PowerShell handle exit codes directly
+          $ErrorActionPreference = 'Stop'
+          & .\build.ps1 -Task Build
 
-          if ($exitCode -ne 0) {
-            Write-Error "Build failed with exit code $exitCode"
-            exit $exitCode
+          # Check if build succeeded
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
+            throw "Build failed with exit code $LASTEXITCODE"
           }
-
-          Write-Host "Build completed successfully"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
