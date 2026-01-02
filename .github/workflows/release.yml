@@ -68,8 +68,8 @@ jobs:
       - name: Install SOPS and age
         shell: bash
         run: |
-          SOPS_VERSION='3.11.0'
-          AGE_VERSION='1.2.1'
+          SOPS_VERSION='3.9.2'
+          AGE_VERSION='1.2.0'
 
           if [[ "$RUNNER_OS" == "Linux" ]]; then
             echo "Installing SOPS ${SOPS_VERSION} on Linux..."
@@ -85,14 +85,15 @@ jobs:
 
           elif [[ "$RUNNER_OS" == "Windows" ]]; then
             echo "Installing SOPS ${SOPS_VERSION} on Windows..."
-            curl -LO "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.exe"
+            # Use -L to follow redirects
+            curl -L -o sops.exe "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.exe"
             mkdir -p "$HOME/bin"
-            mv "sops-v${SOPS_VERSION}.exe" "$HOME/bin/sops.exe"
+            mv sops.exe "$HOME/bin/sops.exe"
             echo "$HOME/bin" >> $GITHUB_PATH
 
             echo "Installing age ${AGE_VERSION} on Windows..."
-            curl -LO "https://github.com/FiloSottile/age/releases/download/v${AGE_VERSION}/age-v${AGE_VERSION}-windows-amd64.zip"
-            unzip "age-v${AGE_VERSION}-windows-amd64.zip"
+            curl -L -o age.zip "https://github.com/FiloSottile/age/releases/download/v${AGE_VERSION}/age-v${AGE_VERSION}-windows-amd64.zip"
+            unzip age.zip
             mv age/*.exe "$HOME/bin/"
           fi
 
@@ -154,6 +155,7 @@ jobs:
           Install-Module -Name Pester -MinimumVersion 5.0.0 -Force -Scope CurrentUser
           Install-Module -Name Microsoft.PowerShell.SecretManagement -Force -Scope CurrentUser
           Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
+          Install-Module -Name powershell-yaml -Force -Scope CurrentUser
 
       - name: Run build
         shell: pwsh
