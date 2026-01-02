@@ -3,13 +3,13 @@
     RootModule           = 'SecretManagement.Sops.Extension.psm1'
 
     # Version number of this module.
-    ModuleVersion        = '0.1.0'
+    ModuleVersion        = '0.3.0'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
 
     # ID used to uniquely identify this module
-    GUID                 = 'b2c3d4e5-f6a7-5b6c-9d0e-1f2a3b4c5d6e'
+    GUID                 = 'cc263113-a583-4c9f-985c-d84ecf2489b2'
 
     # Author of this module
     Author               = 'SecretManagement.Sops Contributors'
