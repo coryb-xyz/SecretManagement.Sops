@@ -25,6 +25,11 @@ BeforeAll {
     $testHelpersPath = Join-Path $PSScriptRoot 'TestHelpers.psm1'
     Import-Module $testHelpersPath -Force
 
+    # Auto-bootstrap test data if missing
+    if (-not (Initialize-TestDataIfMissing)) {
+        throw "Cannot run tests: Test data initialization failed. Please ensure SOPS and age are installed."
+    }
+
     # Clean up any orphaned test vaults from previous runs
     Remove-OrphanedTestVaults
 
@@ -334,16 +339,21 @@ creation_rules:
         It 'Throws on SOPS encryption failure' {
             # Temporarily break SOPS configuration by removing .sops.yaml
             $sopsConfigPath = Join-Path $script:TestSecretsPath '.sops.yaml'
+            $sopsConfigPath = [System.IO.Path]::GetFullPath($sopsConfigPath)  # Normalize path
             $originalConfig = Get-Content $sopsConfigPath -Raw
-            Remove-Item $sopsConfigPath
+            Remove-Item $sopsConfigPath -Force
 
             try {
                 { Set-Secret -Name 'test-fail' -Secret 'value' -Vault $script:TestVaultName -ErrorAction Stop } |
                     Should -Throw
             }
  finally {
-                # Restore .sops.yaml
-                Set-Content -Path $sopsConfigPath -Value $originalConfig
+                # Restore .sops.yaml - ensure parent directory exists
+                $parentDir = Split-Path $sopsConfigPath -Parent
+                if (-not (Test-Path $parentDir)) {
+                    New-Item -ItemType Directory -Path $parentDir -Force | Out-Null
+                }
+                Set-Content -Path $sopsConfigPath -Value $originalConfig -Force
             }
         }
 

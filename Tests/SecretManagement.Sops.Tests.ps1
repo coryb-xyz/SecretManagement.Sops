@@ -5,6 +5,11 @@ BeforeAll {
     $testHelpersPath = Join-Path $PSScriptRoot 'TestHelpers.psm1'
     Import-Module $testHelpersPath -Force
 
+    # Auto-bootstrap test data if missing
+    if (-not (Initialize-TestDataIfMissing)) {
+        throw "Cannot run tests: Test data initialization failed. Please ensure SOPS and age are installed."
+    }
+
     # Clean up any orphaned test vaults from previous runs
     Remove-OrphanedTestVaults
 
@@ -74,24 +79,32 @@ Describe 'Test-SopsAvailable' -Tag 'ReadSupport', 'Unit' {
 Describe 'Resolve-SecretName' -Tag 'ReadSupport', 'Unit' {
     Context 'RelativePath strategy' {
         It 'Removes base path and extension' {
-            $result = Resolve-SecretName -FilePath 'C:\secrets\db\password.yaml' -BasePath 'C:\secrets' -NamingStrategy 'RelativePath'
+            $basePath = Join-Path $TestDrive 'secrets'
+            $filePath = Join-Path $basePath 'db' 'password.yaml'
+            $result = Resolve-SecretName -FilePath $filePath -BasePath $basePath -NamingStrategy 'RelativePath'
             $result | Should -Be 'db/password'
         }
 
         It 'Handles deeply nested paths' {
-            $result = Resolve-SecretName -FilePath 'C:\secrets\app\prod\api\keys.yaml' -BasePath 'C:\secrets' -NamingStrategy 'RelativePath'
+            $basePath = Join-Path $TestDrive 'secrets'
+            $filePath = Join-Path $basePath 'app' 'prod' 'api' 'keys.yaml'
+            $result = Resolve-SecretName -FilePath $filePath -BasePath $basePath -NamingStrategy 'RelativePath'
             $result | Should -Be 'app/prod/api/keys'
         }
 
         It 'Handles file in root of base path' {
-            $result = Resolve-SecretName -FilePath 'C:\secrets\secret.yaml' -BasePath 'C:\secrets' -NamingStrategy 'RelativePath'
+            $basePath = Join-Path $TestDrive 'secrets'
+            $filePath = Join-Path $basePath 'secret.yaml'
+            $result = Resolve-SecretName -FilePath $filePath -BasePath $basePath -NamingStrategy 'RelativePath'
             $result | Should -Be 'secret'
         }
     }
 
     Context 'FileName strategy' {
         It 'Returns only filename without extension' {
-            $result = Resolve-SecretName -FilePath 'C:\secrets\nested\deep\myfile.yaml' -BasePath 'C:\secrets' -NamingStrategy 'FileName'
+            $basePath = Join-Path $TestDrive 'secrets'
+            $filePath = Join-Path $basePath 'nested' 'deep' 'myfile.yaml'
+            $result = Resolve-SecretName -FilePath $filePath -BasePath $basePath -NamingStrategy 'FileName'
             $result | Should -Be 'myfile'
         }
     }

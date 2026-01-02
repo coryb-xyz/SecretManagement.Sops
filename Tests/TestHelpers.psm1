@@ -783,8 +783,14 @@ function Initialize-TestDataIfMissing {
     $testKeyFile = Join-Path $testDataPath 'test-key.txt'
     $setupScript = Join-Path $testDataPath 'Initialize-SopsTestEnvironment.ps1'
 
-    # Check if test data exists
-    $needsSetup = $Force -or (-not (Test-Path $testKeyFile))
+    # Check if test data exists - need BOTH key AND encrypted files
+    $keyMissing = -not (Test-Path $testKeyFile)
+
+    # Check for at least one encrypted file as a smoke test
+    $sampleEncryptedFile = Join-Path $testDataPath 'simple-secret.yaml'
+    $encryptedFilesMissing = -not (Test-Path $sampleEncryptedFile)
+
+    $needsSetup = $Force -or $keyMissing -or $encryptedFilesMissing
 
     if ($needsSetup) {
         # Check prerequisites
@@ -806,7 +812,7 @@ Or skip tests requiring these tools.
         # Run setup script
         Write-Verbose "Initializing test data..."
         try {
-            & $setupScript -ErrorAction Stop
+            & $setupScript -Mode UnitTest -ErrorAction Stop
             return $true
         }
         catch {

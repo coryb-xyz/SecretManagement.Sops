@@ -32,7 +32,7 @@ jobs:
             New-Item -ItemType Directory -Force -Path $binPath | Out-Null
 
             Write-Host "Installing SOPS $SOPS_VERSION on Windows..."
-            Invoke-WebRequest -Uri "https://github.com/getsops/sops/releases/download/v$SOPS_VERSION/sops-v$SOPS_VERSION.exe" -OutFile "$binPath\sops.exe"
+            Invoke-WebRequest -Uri "https://github.com/getsops/sops/releases/download/v$SOPS_VERSION/sops-v$($SOPS_VERSION).amd64.exe" -OutFile "$binPath\sops.exe"
 
             Write-Host "Installing age $AGE_VERSION on Windows..."
             Invoke-WebRequest -Uri "https://github.com/FiloSottile/age/releases/download/v$AGE_VERSION/age-v$AGE_VERSION-windows-amd64.zip" -OutFile "age.zip"

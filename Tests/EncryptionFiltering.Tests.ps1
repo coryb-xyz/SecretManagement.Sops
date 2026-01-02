@@ -3,6 +3,11 @@
     $testHelpersPath = Join-Path $PSScriptRoot 'TestHelpers.psm1'
     Import-Module $testHelpersPath -Force
 
+    # Auto-bootstrap test data if missing
+    if (-not (Initialize-TestDataIfMissing)) {
+        throw "Cannot run tests: Test data initialization failed. Please ensure SOPS and age are installed."
+    }
+
     # Clean up any orphaned test vaults from previous runs
     Remove-OrphanedTestVaults
 
