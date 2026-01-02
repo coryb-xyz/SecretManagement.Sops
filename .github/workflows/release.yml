@@ -65,49 +65,52 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install SOPS and age
-        shell: bash
-        run: |
-          SOPS_VERSION='3.11.0'
-          AGE_VERSION='1.2.1'
-
-          if [[ "$RUNNER_OS" == "Linux" ]]; then
-            echo "Installing SOPS ${SOPS_VERSION} on Linux..."
-            curl -LO "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.linux.amd64"
-            chmod +x "sops-v${SOPS_VERSION}.linux.amd64"
-            sudo mv "sops-v${SOPS_VERSION}.linux.amd64" /usr/local/bin/sops
-
-            echo "Installing age ${AGE_VERSION} on Linux..."
-            curl -LO "https://github.com/FiloSottile/age/releases/download/v${AGE_VERSION}/age-v${AGE_VERSION}-linux-amd64.tar.gz"
-            tar xzf "age-v${AGE_VERSION}-linux-amd64.tar.gz"
-            sudo mv age/age /usr/local/bin/
-            sudo mv age/age-keygen /usr/local/bin/
-
-          elif [[ "$RUNNER_OS" == "Windows" ]]; then
-            echo "Installing SOPS ${SOPS_VERSION} on Windows..."
-            # Use -L to follow redirects
-            curl -L -o sops.exe "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.exe"
-            mkdir -p "$HOME/bin"
-            mv sops.exe "$HOME/bin/sops.exe"
-            echo "$HOME/bin" >> $GITHUB_PATH
-
-            echo "Installing age ${AGE_VERSION} on Windows..."
-            curl -L -o age.zip "https://github.com/FiloSottile/age/releases/download/v${AGE_VERSION}/age-v${AGE_VERSION}-windows-amd64.zip"
-            unzip age.zip
-            mv age/*.exe "$HOME/bin/"
-          fi
-
-          # Verify installations work
-          echo "Verifying SOPS and age..."
-          sops --version || exit 1
-          age --version || exit 1
-          echo "✓ SOPS and age installed successfully"
-
-      - name: Generate test data
+      - name: Install SOPS/age and generate test data
         shell: pwsh
         run: |
-          Write-Host "Generating test data with SOPS encryption..."
-          pwsh -nop -c 'Tests/TestData/Initialize-SopsTestEnvironment.ps1'
+          $SOPS_VERSION = '3.9.2'
+          $AGE_VERSION = '1.2.0'
+
+          if ($IsWindows) {
+            # Windows: Download to user bin directory and add to PATH
+            $binPath = Join-Path $env:USERPROFILE 'bin'
+            New-Item -ItemType Directory -Force -Path $binPath | Out-Null
+
+            Write-Host "Installing SOPS $SOPS_VERSION on Windows..."
+            Invoke-WebRequest -Uri "https://github.com/getsops/sops/releases/download/v$SOPS_VERSION/sops-v$SOPS_VERSION.exe" -OutFile "$binPath\sops.exe"
+
+            Write-Host "Installing age $AGE_VERSION on Windows..."
+            Invoke-WebRequest -Uri "https://github.com/FiloSottile/age/releases/download/v$AGE_VERSION/age-v$AGE_VERSION-windows-amd64.zip" -OutFile "age.zip"
+            Expand-Archive age.zip -DestinationPath .
+            Move-Item age\*.exe $binPath\ -Force
+
+            # Add to PATH for this session and future steps
+            $env:PATH = "$binPath;$env:PATH"
+            echo "$binPath" >> $env:GITHUB_PATH
+
+          } else {
+            # Linux: Install to /usr/local/bin (already in PATH)
+            Write-Host "Installing SOPS $SOPS_VERSION on Linux..."
+            Invoke-WebRequest -Uri "https://github.com/getsops/sops/releases/download/v$SOPS_VERSION/sops-v$SOPS_VERSION.linux.amd64" -OutFile sops
+            chmod +x sops
+            sudo mv sops /usr/local/bin/
+
+            Write-Host "Installing age $AGE_VERSION on Linux..."
+            Invoke-WebRequest -Uri "https://github.com/FiloSottile/age/releases/download/v$AGE_VERSION/age-v$AGE_VERSION-linux-amd64.tar.gz" -OutFile age.tar.gz
+            tar xzf age.tar.gz
+            sudo mv age/age /usr/local/bin/
+            sudo mv age/age-keygen /usr/local/bin/
+          }
+
+          # Verify installations work
+          Write-Host "`nVerifying SOPS and age..."
+          sops --version
+          age --version
+          Write-Host "✓ SOPS and age installed successfully"
+
+          # Generate test data
+          Write-Host "`nGenerating test data with SOPS encryption..."
+          .\Tests\TestData\Initialize-SopsTestEnvironment.ps1
 
           Write-Host "`nVerifying test data files were created..."
           $testFiles = @(
@@ -138,15 +141,7 @@ jobs:
 
       - name: Run build
         shell: pwsh
-        run: |
-          # Run build - let PowerShell handle exit codes directly
-          $ErrorActionPreference = 'Stop'
-          & .\build.ps1 -Task Build
-
-          # Check if build succeeded
-          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
-            throw "Build failed with exit code $LASTEXITCODE"
-          }
+        run: .\build.ps1 -Task Build
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
