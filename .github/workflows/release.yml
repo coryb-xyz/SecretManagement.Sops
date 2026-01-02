@@ -65,31 +65,40 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install SOPS
-        uses: getsops/sops-action@v1
-        with:
-          version: '3.11.0'
-
-      - name: Install age
+      - name: Install SOPS and age
         shell: bash
         run: |
-          # age doesn't have an official action, so install manually
-          VERSION='1.2.1'
+          SOPS_VERSION='3.11.0'
+          AGE_VERSION='1.2.1'
 
           if [[ "$RUNNER_OS" == "Linux" ]]; then
-            URL="https://github.com/FiloSottile/age/releases/download/v${VERSION}/age-v${VERSION}-linux-amd64.tar.gz"
-            curl -LO "$URL"
-            tar xzf "age-v${VERSION}-linux-amd64.tar.gz"
+            echo "Installing SOPS ${SOPS_VERSION} on Linux..."
+            curl -LO "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.linux.amd64"
+            chmod +x "sops-v${SOPS_VERSION}.linux.amd64"
+            sudo mv "sops-v${SOPS_VERSION}.linux.amd64" /usr/local/bin/sops
+
+            echo "Installing age ${AGE_VERSION} on Linux..."
+            curl -LO "https://github.com/FiloSottile/age/releases/download/v${AGE_VERSION}/age-v${AGE_VERSION}-linux-amd64.tar.gz"
+            tar xzf "age-v${AGE_VERSION}-linux-amd64.tar.gz"
             sudo mv age/age /usr/local/bin/
             sudo mv age/age-keygen /usr/local/bin/
+
           elif [[ "$RUNNER_OS" == "Windows" ]]; then
-            URL="https://github.com/FiloSottile/age/releases/download/v${VERSION}/age-v${VERSION}-windows-amd64.zip"
-            curl -LO "$URL"
-            unzip "age-v${VERSION}-windows-amd64.zip"
+            echo "Installing SOPS ${SOPS_VERSION} on Windows..."
+            curl -LO "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.exe"
             mkdir -p "$HOME/bin"
-            mv age/*.exe "$HOME/bin/"
+            mv "sops-v${SOPS_VERSION}.exe" "$HOME/bin/sops.exe"
             echo "$HOME/bin" >> $GITHUB_PATH
+
+            echo "Installing age ${AGE_VERSION} on Windows..."
+            curl -LO "https://github.com/FiloSottile/age/releases/download/v${AGE_VERSION}/age-v${AGE_VERSION}-windows-amd64.zip"
+            unzip "age-v${AGE_VERSION}-windows-amd64.zip"
+            mv age/*.exe "$HOME/bin/"
           fi
+
+          echo "Verifying installations..."
+          sops --version
+          age --version
 
       - name: Verify SOPS and age installation
         shell: pwsh
