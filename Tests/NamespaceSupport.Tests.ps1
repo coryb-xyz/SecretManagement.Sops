@@ -175,7 +175,7 @@ Describe 'Namespace Extraction' -Tag 'Namespace', 'Unit' {
             $index = Get-SecretIndex -Path $script:TestSecretsPath -FilePattern '*.yaml' -Recurse $true `
                 -NamingStrategy 'RelativePath'
 
-            $deepEntry = $index | Where-Object { $_.FilePath -like '*apps\foo\bar\dv1\secret.yaml' }
+            $deepEntry = $index | Where-Object { $_.Name -eq 'apps/foo/bar/dv1/secret' }
 
             $deepEntry | Should -Not -BeNullOrEmpty
             $deepEntry.Namespace | Should -Be 'apps/foo/bar/dv1'
@@ -187,7 +187,7 @@ Describe 'Namespace Extraction' -Tag 'Namespace', 'Unit' {
             $index = Get-SecretIndex -Path $script:TestSecretsPath -FilePattern '*.yaml' -Recurse $true `
                 -NamingStrategy 'RelativePath'
 
-            $dbEntry = $index | Where-Object { $_.FilePath -like '*database\postgres.yaml' }
+            $dbEntry = $index | Where-Object { $_.Name -eq 'database/postgres' }
 
             $dbEntry | Should -Not -BeNullOrEmpty
             $dbEntry.Namespace | Should -Be 'database'
