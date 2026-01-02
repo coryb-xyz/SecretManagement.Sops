@@ -256,7 +256,12 @@ task Test {
 
     $pesterConfig = New-PesterConfiguration
     $pesterConfig.Run.Path = $TestsPath
-    $pesterConfig.Run.Exit = $false
+
+    # Exit with code in CI environments (enables proper failure detection)
+    # but stay in shell for local development
+    $isCI = $env:CI -eq 'true' -or $env:GITHUB_ACTIONS -eq 'true'
+    $pesterConfig.Run.Exit = $isCI
+
     $pesterConfig.Output.Verbosity = 'Detailed'
     $pesterConfig.TestResult.Enabled = $true
     $pesterConfig.TestResult.OutputPath = Join-Path $PSScriptRoot 'TestResults.xml'
