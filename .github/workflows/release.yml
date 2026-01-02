@@ -1,0 +1,217 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    name: Validate tag and manifest version
+    runs-on: ubuntu-latest
+    outputs:
+      tag_version: ${{ steps.extract.outputs.tag_version }}
+      manifest_version: ${{ steps.extract.outputs.manifest_version }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract versions
+        id: extract
+        shell: pwsh
+        run: |
+          # Extract tag version (remove 'v' prefix)
+          $tagVersion = "${{ github.ref_name }}" -replace '^v', ''
+          echo "tag_version=$tagVersion" >> $env:GITHUB_OUTPUT
+
+          # Extract manifest version
+          $manifestPath = 'SecretManagement.Sops/SecretManagement.Sops.psd1'
+          $manifest = Import-PowerShellDataFile -Path $manifestPath
+          $manifestVersion = $manifest.ModuleVersion
+          echo "manifest_version=$manifestVersion" >> $env:GITHUB_OUTPUT
+
+          # Display for debugging
+          Write-Host "Tag version: $tagVersion"
+          Write-Host "Manifest version: $manifestVersion"
+
+      - name: Validate versions match
+        shell: pwsh
+        run: |
+          $tagVersion = "${{ steps.extract.outputs.tag_version }}"
+          $manifestVersion = "${{ steps.extract.outputs.manifest_version }}"
+
+          if ($tagVersion -ne $manifestVersion) {
+            Write-Error "Version mismatch: tag is v$tagVersion but manifest is $manifestVersion"
+            Write-Error "Please update the manifest version to match the tag, or create a tag matching the manifest version."
+            exit 1
+          }
+
+          Write-Host "✓ Tag version matches manifest version: $tagVersion"
+
+  build-and-test:
+    name: Build and test on ${{ matrix.os }}
+    needs: validate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install SOPS/age and generate test data
+        shell: pwsh
+        run: |
+          $SOPS_VERSION = '3.9.2'
+          $AGE_VERSION = '1.2.0'
+
+          if ($IsWindows) {
+            # Windows: Download to user bin directory and add to PATH
+            $binPath = Join-Path $env:USERPROFILE 'bin'
+            New-Item -ItemType Directory -Force -Path $binPath | Out-Null
+
+            Write-Host "Installing SOPS $SOPS_VERSION on Windows..."
+            Invoke-WebRequest -Uri "https://github.com/getsops/sops/releases/download/v$SOPS_VERSION/sops-v$SOPS_VERSION.exe" -OutFile "$binPath\sops.exe"
+
+            Write-Host "Installing age $AGE_VERSION on Windows..."
+            Invoke-WebRequest -Uri "https://github.com/FiloSottile/age/releases/download/v$AGE_VERSION/age-v$AGE_VERSION-windows-amd64.zip" -OutFile "age.zip"
+            Expand-Archive age.zip -DestinationPath .
+            Move-Item age\*.exe $binPath\ -Force
+
+            # Add to PATH for this session and future steps
+            $env:PATH = "$binPath;$env:PATH"
+            echo "$binPath" >> $env:GITHUB_PATH
+
+          } else {
+            # Linux: Install to /usr/local/bin (already in PATH)
+            Write-Host "Installing SOPS $SOPS_VERSION on Linux..."
+            Invoke-WebRequest -Uri "https://github.com/getsops/sops/releases/download/v$SOPS_VERSION/sops-v$SOPS_VERSION.linux.amd64" -OutFile sops
+            chmod +x sops
+            sudo mv sops /usr/local/bin/
+
+            Write-Host "Installing age $AGE_VERSION on Linux..."
+            Invoke-WebRequest -Uri "https://github.com/FiloSottile/age/releases/download/v$AGE_VERSION/age-v$AGE_VERSION-linux-amd64.tar.gz" -OutFile age.tar.gz
+            tar xzf age.tar.gz
+            sudo mv age/age /usr/local/bin/
+            sudo mv age/age-keygen /usr/local/bin/
+          }
+
+          # Verify installations work
+          Write-Host "`nVerifying SOPS and age..."
+          sops --version
+          age --version
+          Write-Host "✓ SOPS and age installed successfully"
+
+          # Generate test data
+          Write-Host "`nGenerating test data with SOPS encryption..."
+          .\Tests\TestData\Initialize-SopsTestEnvironment.ps1
+
+          Write-Host "`nVerifying test data files were created..."
+          $testFiles = @(
+            'Tests/TestData/simple-secret.yaml',
+            'Tests/TestData/k8s-secret.yaml',
+            'Tests/TestData/credentials.yaml',
+            'Tests/TestData/.sops.yaml'
+          )
+
+          foreach ($file in $testFiles) {
+            if (Test-Path $file) {
+              Write-Host "✓ $file created"
+            } else {
+              Write-Error "✗ $file not found"
+              exit 1
+            }
+          }
+
+      - name: Install build dependencies
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module -Name InvokeBuild -MinimumVersion 5.10.0 -Force -Scope CurrentUser
+          Install-Module -Name Pester -MinimumVersion 5.0.0 -Force -Scope CurrentUser
+          Install-Module -Name Microsoft.PowerShell.SecretManagement -Force -Scope CurrentUser
+          Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
+          Install-Module -Name powershell-yaml -Force -Scope CurrentUser
+
+      - name: Run build
+        shell: pwsh
+        run: .\build.ps1 -Task Build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: module-${{ matrix.os }}
+          path: Build/SecretManagement.Sops/
+          retention-days: 1
+
+  create-release:
+    name: Create GitHub Release
+    needs: [validate, build-and-test]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Windows build
+        uses: actions/download-artifact@v4
+        with:
+          name: module-windows-latest
+          path: release-artifacts/SecretManagement.Sops
+
+      - name: Create release archive
+        shell: pwsh
+        run: |
+          $version = "${{ needs.validate.outputs.tag_version }}"
+          $archiveName = "SecretManagement.Sops-v$version.zip"
+
+          # Create zip from Windows build (compatible with Import-Module)
+          Compress-Archive -Path release-artifacts/SecretManagement.Sops -DestinationPath $archiveName
+
+          Write-Host "Created release archive: $archiveName"
+          echo "ARCHIVE_NAME=$archiveName" >> $env:GITHUB_ENV
+
+      - name: Generate release notes
+        id: release_notes
+        shell: pwsh
+        run: |
+          $version = "${{ needs.validate.outputs.tag_version }}"
+
+          # Extract release notes from CHANGELOG.md
+          if (Test-Path CHANGELOG.md) {
+            $changelog = Get-Content CHANGELOG.md -Raw
+
+            # Try to find version section (supports both ## [X.Y.Z] and ## X.Y.Z formats)
+            $pattern = "(?ms)^## \[?$([regex]::Escape($version))\]?[^\r\n]*[\r\n]+(.*?)(?=^## |\z)"
+
+            if ($changelog -match $pattern) {
+              $notes = $matches[1].Trim()
+              Write-Host "Found release notes in CHANGELOG.md for version $version"
+            } else {
+              $notes = "Release $version`n`nSee [CHANGELOG.md](CHANGELOG.md) for details."
+              Write-Host "Version $version not found in CHANGELOG.md, using default notes"
+            }
+          } else {
+            $notes = "Release $version"
+            Write-Host "CHANGELOG.md not found, using minimal release notes"
+          }
+
+          # Output to file for multiline content
+          $notes | Out-File -FilePath release-notes.md -Encoding utf8
+          echo "NOTES_FILE=release-notes.md" >> $env:GITHUB_ENV
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          body_path: release-notes.md
+          files: ${{ env.ARCHIVE_NAME }}
+          draft: false
+          prerelease: false

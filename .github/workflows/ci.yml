@@ -9,12 +9,80 @@ on:
 
 jobs:
   test:
-    name: Run Tests
-    runs-on: windows-latest
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Install SOPS/age and generate test data
+        shell: pwsh
+        run: |
+          $SOPS_VERSION = '3.11.0'
+          $AGE_VERSION = '1.2.1'
+
+          if ($IsWindows) {
+            # Windows: Download to user bin directory and add to PATH
+            $binPath = Join-Path $env:USERPROFILE 'bin'
+            New-Item -ItemType Directory -Force -Path $binPath | Out-Null
+
+            Write-Host "Installing SOPS $SOPS_VERSION on Windows..."
+            Invoke-WebRequest -Uri "https://github.com/getsops/sops/releases/download/v$SOPS_VERSION/sops-v$SOPS_VERSION.exe" -OutFile "$binPath\sops.exe"
+
+            Write-Host "Installing age $AGE_VERSION on Windows..."
+            Invoke-WebRequest -Uri "https://github.com/FiloSottile/age/releases/download/v$AGE_VERSION/age-v$AGE_VERSION-windows-amd64.zip" -OutFile "age.zip"
+            Expand-Archive age.zip -DestinationPath .
+            Move-Item age\*.exe $binPath\ -Force
+
+            # Add to PATH for this session and future steps
+            $env:PATH = "$binPath;$env:PATH"
+            echo "$binPath" >> $env:GITHUB_PATH
+
+          } else {
+            # Linux: Install to /usr/local/bin (already in PATH)
+            Write-Host "Installing SOPS $SOPS_VERSION on Linux..."
+            Invoke-WebRequest -Uri "https://github.com/getsops/sops/releases/download/v$SOPS_VERSION/sops-v$SOPS_VERSION.linux.amd64" -OutFile sops
+            chmod +x sops
+            sudo mv sops /usr/local/bin/
+
+            Write-Host "Installing age $AGE_VERSION on Linux..."
+            Invoke-WebRequest -Uri "https://github.com/FiloSottile/age/releases/download/v$AGE_VERSION/age-v$AGE_VERSION-linux-amd64.tar.gz" -OutFile age.tar.gz
+            tar xzf age.tar.gz
+            sudo mv age/age /usr/local/bin/
+            sudo mv age/age-keygen /usr/local/bin/
+          }
+
+          # Verify installations work
+          Write-Host "`nVerifying SOPS and age..."
+          sops --version
+          age --version
+          Write-Host "✓ SOPS and age installed successfully"
+
+          # Generate test data
+          Write-Host "`nGenerating test data with SOPS encryption..."
+          .\Tests\TestData\Initialize-SopsTestEnvironment.ps1
+
+          Write-Host "`nVerifying test data files were created..."
+          $testFiles = @(
+            'Tests/TestData/simple-secret.yaml',
+            'Tests/TestData/k8s-secret.yaml',
+            'Tests/TestData/credentials.yaml',
+            'Tests/TestData/.sops.yaml'
+          )
+
+          foreach ($file in $testFiles) {
+            if (Test-Path $file) {
+              Write-Host "✓ $file created"
+            } else {
+              Write-Error "✗ $file not found"
+              exit 1
+            }
+          }
 
       - name: Install build dependencies
         shell: pwsh
@@ -24,15 +92,22 @@ jobs:
           Install-Module -Name Pester -MinimumVersion 5.0.0 -Force -Scope CurrentUser
           Install-Module -Name Microsoft.PowerShell.SecretManagement -Force -Scope CurrentUser
           Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
+          Install-Module -Name powershell-yaml -Force -Scope CurrentUser
 
       - name: Run build
         shell: pwsh
-        run: |
-          pwsh -nop -c '.\build.ps1 -Task Build'
+        run: .\build.ps1 -Task Build
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: test-results
+          name: test-results-${{ matrix.os }}
           path: TestResults.xml
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: module-${{ matrix.os }}
+          path: Build/SecretManagement.Sops/
