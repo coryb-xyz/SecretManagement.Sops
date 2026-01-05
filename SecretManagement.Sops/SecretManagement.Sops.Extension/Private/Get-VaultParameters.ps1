@@ -14,6 +14,7 @@
         NamingStrategy    = 'RelativePath'
         AgeKeyFile        = $null
         RequireEncryption = $false
+        RequireSopsMatch  = $false
     }
 
     # Merge provided parameters with defaults

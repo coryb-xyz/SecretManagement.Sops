@@ -47,7 +47,7 @@
     Assert-VaultPath -Parameters $params
 
     # Build the secret index
-    $index = Get-SecretIndex -Path $params.Path -FilePattern $params.FilePattern -Recurse $params.Recurse -NamingStrategy $params.NamingStrategy -RequireEncryption $params.RequireEncryption
+    $index = Get-SecretIndex -Path $params.Path -FilePattern $params.FilePattern -Recurse $params.Recurse -NamingStrategy $params.NamingStrategy -RequireEncryption $params.RequireEncryption -RequireSopsMatch $params.RequireSopsMatch
 
     $secretInfoList = @()
 
