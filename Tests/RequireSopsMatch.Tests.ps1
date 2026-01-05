@@ -401,7 +401,7 @@ Describe 'GitOps Migration Workflow' -Tag 'Integration' {
         # Find unencrypted secrets needing migration
         $index = Get-SecretIndex -Path $testDataPath -FilePattern '*.yaml' -Recurse $true -RequireSopsMatch $true
 
-        $k8sSecret = $index | Where-Object { $_.Name -like '*k8s-secret-plain*' }
+        $k8sSecret = $index | Where-Object { $_.Name -eq 'migration/k8s-secret-plain' }
         $k8sSecret | Should -Not -BeNullOrEmpty
 
         # Verify we can read the plaintext content (for migration)
