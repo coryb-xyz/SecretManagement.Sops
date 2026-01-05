@@ -161,6 +161,7 @@ Configure vault behavior with these parameters:
 | `NamingStrategy` | String | `RelativePath` | How to name secrets: `RelativePath` or `FileName` |
 | `AgeKeyFile` | String | `$null` | Path to age key file (overrides `SOPS_AGE_KEY_FILE` environment variable) |
 | `RequireEncryption` | Boolean | `$false` | Only include SOPS-encrypted files; exclude plaintext files |
+| `RequireSopsMatch` | Boolean | `$false` | Only include files matching `.sops.yaml` rules but not yet encrypted (useful for migration workflows) |
 
 ### Naming Strategies
 
@@ -309,6 +310,10 @@ $yamlContent = Get-Secret -Name 'apps/foo/bar/dv1/config' -Vault 'GitOpsSecrets'
 
 The `RequireEncryption` vault parameter provides security by ensuring only SOPS-encrypted files are accessible through the vault. This is especially useful when storing both encrypted secrets and plaintext configuration files in the same directory structure.
 
+### RequireSopsMatch Parameter
+
+The `RequireSopsMatch` vault parameter helps identify files that match `.sops.yaml` creation rules but are not yet encrypted. This is particularly useful for GitOps migration workflows where you're transitioning unencrypted files to SOPS encryption.
+
 **How it works:**
 - Excludes files without SOPS metadata
 - Respects `.sops.yaml` configuration (excludes files matching `unencrypted_suffix` patterns)
@@ -343,6 +348,59 @@ Get-SecretInfo -Vault 'SecureSecrets'
 - **Production vaults**: Ensure only encrypted secrets are accessible
 - **Mixed repositories**: Work with repos containing both secrets and configuration templates
 - **Security compliance**: Prevent accidental retrieval of unencrypted files
+
+**How it works:**
+- Matches files against `path_regex` patterns in `.sops.yaml` creation rules
+- Filters based on content encryption rules (`encrypted_regex`, `encrypted_suffix`, etc.)
+- Only includes files that are **not** yet encrypted by SOPS
+- Allows reading plaintext content for migration scenarios
+
+**Example: GitOps Migration Workflow**
+
+```powershell
+# Scenario: Migrating Kubernetes secrets to SOPS in a GitOps repository
+# You have plaintext YAML files with references to Azure Key Vault secrets
+# You want to identify which files need encryption based on .sops.yaml rules
+
+# .sops.yaml example:
+# creation_rules:
+#   - path_regex: apps[/\\]prod[/\\].*\.yaml$
+#     encrypted_regex: ^(data|stringData)$
+#     age: <your-age-public-key>
+
+# Register vault to see only unencrypted files needing migration
+Register-SecretVault -Name 'SopsMigration' -ModuleName 'SecretManagement.Sops' -VaultParameters @{
+    Path = 'C:\gitops-repo\secrets'
+    RequireSopsMatch = $true  # Only show files matching .sops.yaml rules but not encrypted
+    Recurse = $true
+}
+
+# List files that need encryption
+Get-SecretInfo -Vault 'SopsMigration'
+# Returns: Only plaintext files in apps/prod/ with data or stringData keys
+
+# Migrate a secret: read plaintext, fetch real secret, encrypt
+$secret = Get-Secret -Name 'apps/prod/database-credentials' -Vault 'SopsMigration' -AsPlainText | ConvertFrom-Yaml
+
+# Fetch actual secrets from Azure Key Vault
+$secret.stringData.username = Get-AzKeyVaultSecret -VaultName 'prod-kv' -Name 'db-username' -AsPlainText
+$secret.stringData.password = Get-AzKeyVaultSecret -VaultName 'prod-kv' -Name 'db-password' -AsPlainText
+
+# Update and encrypt the file
+Set-Secret -Name 'apps/prod/database-credentials' -Vault 'SopsMigration' -Secret ($secret | ConvertTo-Yaml)
+
+# Verify the file no longer appears (now encrypted)
+Get-SecretInfo -Vault 'SopsMigration' -Filter 'apps/prod/database-credentials'
+# Returns: Nothing (file is now encrypted)
+```
+
+**Use cases:**
+- **GitOps migration**: Identify unencrypted files that should be protected by SOPS
+- **Compliance validation**: Ensure all files matching security policies are encrypted
+- **Automated workflows**: Script batch migration of secrets from external vaults to SOPS
+- **Secret discovery**: Find all files that would be encrypted based on `.sops.yaml` rules
+
+**Important**: `RequireEncryption` and `RequireSopsMatch` are mutually exclusive. If both are `$true`, `RequireEncryption` takes precedence.
 
 ### Wildcard Filtering
 
@@ -527,6 +585,7 @@ Add-Content $PROFILE "`n`$env:SOPS_AGE_KEY_FILE = 'C:\Users\YourName\.sops\key.t
 - ✅ Multiple naming strategies (RelativePath, FileName)
 - ✅ Multiple encryption backends (Azure KV, age, AWS KMS, GCP KMS, PGP)
 - ✅ Encryption filtering with RequireEncryption parameter
+- ✅ Migration support with RequireSopsMatch parameter for identifying unencrypted files
 
 ### Planned Features
 - **Enhanced Format Support**: JSON and dotenv file formats
