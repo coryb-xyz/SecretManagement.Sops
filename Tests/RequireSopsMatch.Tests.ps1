@@ -340,8 +340,8 @@ Describe 'Get-SecretIndex with RequireSopsMatch' {
         It 'Includes plaintext files matching .sops.yaml rules with encryptable content' {
             $index = Get-SecretIndex -Path $testDataPath -FilePattern '*.yaml' -Recurse $true -RequireSopsMatch $true
 
-            # Should include migration/k8s-secret-unencrypted.yaml
-            $k8sSecret = $index | Where-Object { $_.Name -like '*k8s-secret-unencrypted*' }
+            # Should include migration/k8s-secret-plain.yaml
+            $k8sSecret = $index | Where-Object { $_.Name -like '*k8s-secret-plain*' }
             $k8sSecret | Should -Not -BeNullOrEmpty
         }
 
@@ -358,16 +358,16 @@ Describe 'Get-SecretIndex with RequireSopsMatch' {
         It 'Includes plaintext files matching catch-all rule with encryptable content' {
             $index = Get-SecretIndex -Path $testDataPath -FilePattern '*.yaml' -Recurse $true -RequireSopsMatch $true
 
-            # Should include no-match-unencrypted.yaml (matches \.yaml$ catch-all rule with no content filter)
-            $noMatch = $index | Where-Object { $_.Name -like '*no-match-unencrypted*' }
+            # Should include no-match-plain.yaml (matches \.yaml$ catch-all rule with no content filter)
+            $noMatch = $index | Where-Object { $_.Name -like '*no-match-plain*' }
             $noMatch | Should -Not -BeNullOrEmpty
         }
 
         It 'Excludes plaintext files with no encryptable content' {
             $index = Get-SecretIndex -Path $testDataPath -FilePattern '*.yaml' -Recurse $true -RequireSopsMatch $true
 
-            # Should NOT include migration/k8s-config-no-secrets.yaml (has no data/stringData keys)
-            $configMap = $index | Where-Object { $_.Name -like '*k8s-config-no-secrets*' }
+            # Should NOT include migration/k8s-config-plain.yaml (has no data/stringData keys)
+            $configMap = $index | Where-Object { $_.Name -like '*k8s-config-plain*' }
             $configMap | Should -BeNullOrEmpty
         }
 
@@ -401,7 +401,7 @@ Describe 'GitOps Migration Workflow' -Tag 'Integration' {
         # Find unencrypted secrets needing migration
         $index = Get-SecretIndex -Path $testDataPath -FilePattern '*.yaml' -Recurse $true -RequireSopsMatch $true
 
-        $k8sSecret = $index | Where-Object { $_.Name -like '*k8s-secret-unencrypted*' }
+        $k8sSecret = $index | Where-Object { $_.Name -like '*k8s-secret-plain*' }
         $k8sSecret | Should -Not -BeNullOrEmpty
 
         # Verify we can read the plaintext content (for migration)
