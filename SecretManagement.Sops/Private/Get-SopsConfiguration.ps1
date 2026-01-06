@@ -16,6 +16,7 @@
     .OUTPUTS
     Hashtable with keys:
     - UnencryptedSuffixes: Array of unique suffix strings
+    - CreationRules: Array of hashtables containing PathRegex, EncryptedRegex, UnencryptedSuffix
     - Found: Boolean indicating if .sops.yaml was found and parsed
 
     .EXAMPLE
@@ -39,6 +40,7 @@
     $result = @{
         UnencryptedSuffixes = @()
         Found               = $false
+        CreationRules       = @()
     }
 
     # Check if .sops.yaml exists
@@ -60,6 +62,15 @@
             $suffixes = @()
 
             foreach ($rule in $config.creation_rules) {
+                # Extract full rule data for CreationRules array
+                $ruleData = @{
+                    PathRegex         = $rule.path_regex
+                    EncryptedRegex    = $rule.encrypted_regex
+                    UnencryptedSuffix = $rule.unencrypted_suffix
+                }
+                $result.CreationRules += $ruleData
+
+                # Maintain backward compatibility - collect unencrypted_suffix
                 if ($rule.unencrypted_suffix) {
                     $suffixes += $rule.unencrypted_suffix
                 }
