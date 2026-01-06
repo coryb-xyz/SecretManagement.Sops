@@ -12,7 +12,7 @@
     RootModule = 'SecretManagement.Sops.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.3.1'
+    ModuleVersion = '0.4.0'
 
     # Supported PSEditions
     CompatiblePSEditions = 'Desktop', 'Core'
@@ -69,8 +69,8 @@
     NestedModules = @('.\SecretManagement.Sops.Extension\SecretManagement.Sops.Extension.psd1')
 
     # Functions to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no functions to export.
-    FunctionsToExport    = 'Get-SecretIndex', 'Get-SecretIndexEntry', 'Invoke-SopsDecrypt',
-    'Invoke-SopsEncrypt', 'Invoke-SopsSet', 'Invoke-SopsUnset',
+    FunctionsToExport    = 'Get-SecretIndex', 'Get-SecretIndexEntry', 'Get-SopsEncryptionCandidates',
+    'Invoke-SopsDecrypt', 'Invoke-SopsEncrypt', 'Invoke-SopsSet', 'Invoke-SopsUnset',
     'New-KubernetesSecret', 'Resolve-SecretName', 'Test-SopsAvailable'
 
     # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.

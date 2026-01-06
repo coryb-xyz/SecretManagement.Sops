@@ -16,7 +16,7 @@
     .OUTPUTS
     Hashtable with keys:
     - UnencryptedSuffixes: Array of unique suffix strings
-    - CreationRules: Array of parsed creation rule hashtables
+    - CreationRules: Array of hashtables containing PathRegex, EncryptedRegex, UnencryptedSuffix
     - Found: Boolean indicating if .sops.yaml was found and parsed
 
     .EXAMPLE
@@ -39,8 +39,8 @@
     # Initialize result
     $result = @{
         UnencryptedSuffixes = @()
-        CreationRules       = @()
         Found               = $false
+        CreationRules       = @()
     }
 
     # Check if .sops.yaml exists
@@ -62,6 +62,15 @@
             $suffixes = @()
 
             foreach ($rule in $config.creation_rules) {
+                # Extract full rule data for CreationRules array
+                $ruleData = @{
+                    PathRegex         = $rule.path_regex
+                    EncryptedRegex    = $rule.encrypted_regex
+                    UnencryptedSuffix = $rule.unencrypted_suffix
+                }
+                $result.CreationRules += $ruleData
+
+                # Maintain backward compatibility - collect unencrypted_suffix
                 if ($rule.unencrypted_suffix) {
                     $suffixes += $rule.unencrypted_suffix
                 }
@@ -71,20 +80,6 @@
             if ($suffixes.Count -gt 0) {
                 $result.UnencryptedSuffixes = $suffixes | Select-Object -Unique
             }
-
-            # Extract full creation_rules for RequireSopsMatch filtering
-            $parsedRules = @()
-            foreach ($rule in $config.creation_rules) {
-                $parsedRule = @{
-                    PathRegex         = $rule.path_regex
-                    EncryptedRegex    = $rule.encrypted_regex
-                    EncryptedSuffix   = $rule.encrypted_suffix
-                    UnencryptedRegex  = $rule.unencrypted_regex
-                    UnencryptedSuffix = $rule.unencrypted_suffix
-                }
-                $parsedRules += $parsedRule
-            }
-            $result.CreationRules = $parsedRules
 
             $result.Found = $true
         }
