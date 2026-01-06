@@ -16,7 +16,6 @@
     .OUTPUTS
     Hashtable with keys:
     - UnencryptedSuffixes: Array of unique suffix strings
-    - CreationRules: Array of parsed creation rule hashtables
     - Found: Boolean indicating if .sops.yaml was found and parsed
 
     .EXAMPLE
@@ -39,7 +38,6 @@
     # Initialize result
     $result = @{
         UnencryptedSuffixes = @()
-        CreationRules       = @()
         Found               = $false
     }
 
@@ -71,20 +69,6 @@
             if ($suffixes.Count -gt 0) {
                 $result.UnencryptedSuffixes = $suffixes | Select-Object -Unique
             }
-
-            # Extract full creation_rules for RequireSopsMatch filtering
-            $parsedRules = @()
-            foreach ($rule in $config.creation_rules) {
-                $parsedRule = @{
-                    PathRegex         = $rule.path_regex
-                    EncryptedRegex    = $rule.encrypted_regex
-                    EncryptedSuffix   = $rule.encrypted_suffix
-                    UnencryptedRegex  = $rule.unencrypted_regex
-                    UnencryptedSuffix = $rule.unencrypted_suffix
-                }
-                $parsedRules += $parsedRule
-            }
-            $result.CreationRules = $parsedRules
 
             $result.Found = $true
         }

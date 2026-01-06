@@ -285,9 +285,6 @@ if ($Mode -eq 'UnitTest') {
         'a\b\c\d\e\f\deep-secret-plain.yaml'
         'env-prod\api_key-v2-plain.yaml'
         'k8s\myapp-plain.yaml'
-        'migration\k8s-secret-plain.yaml'
-        'migration\k8s-config-plain.yaml'
-        'no-match-plain.yaml'
         'config_unencrypted.yaml'
         'fake-sops.yaml'
     )
@@ -379,12 +376,9 @@ private-key: |
 Write-Step "Step 5: Creating SOPS configuration"
 
 if ($Mode -eq 'UnitTest') {
-    # Config for unit tests with multiple rules for RequireSopsMatch testing
+    # Simple config for unit tests (includes unencrypted_suffix for EncryptionFiltering tests)
     $sopsConfig = @"
 creation_rules:
-  - path_regex: migration[/\\].*\.yaml$
-    encrypted_regex: ^(data|stringData)$
-    age: $publicKey
   - path_regex: \.yaml$
     unencrypted_suffix: _unencrypted
     age: $publicKey
