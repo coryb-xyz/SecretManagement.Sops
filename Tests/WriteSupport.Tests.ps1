@@ -370,18 +370,9 @@ creation_rules:
             Remove-Secret -Name $specialName -Vault $script:TestVaultName -ErrorAction SilentlyContinue
         }
 
-        It 'Handles empty string secret' {
-            $emptyName = "test-empty-$(New-Guid)"
-
-            Set-Secret -Name $emptyName -Secret '' -Vault $script:TestVaultName
-            $retrieved = Get-Secret -Name $emptyName -Vault $script:TestVaultName -AsPlainText
-
-            # Should return raw YAML string with empty value
-            $retrieved | Should -BeOfType [string]
-            $retrieved | Should -Match 'value:\s*[''"]?[''"]?'
-
-            Remove-Secret -Name $emptyName -Vault $script:TestVaultName -ErrorAction SilentlyContinue
-        }
+        # Note: Empty string test removed - Microsoft.PowerShell.SecretManagement does not allow
+        # empty strings to be passed to vault extensions (parameter validation fails before
+        # our extension is called). This is a limitation of SecretManagement, not our module.
     }
 
     Context 'Kubernetes Secret Support' -Tag 'Kubernetes' {

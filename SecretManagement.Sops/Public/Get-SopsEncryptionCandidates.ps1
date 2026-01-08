@@ -15,29 +15,19 @@ function Get-SopsEncryptionCandidates {
     4. Files matching unencrypted_suffix patterns are excluded (plaintext working copies)
     5. Already-encrypted files are excluded
 
-    .PARAMETER VaultPath
+    .PARAMETER Path
     Path to the vault root directory containing .sops.yaml.
-
-    .PARAMETER FilePattern
-    File pattern to match (e.g., '*.yaml'). Defaults to '*.yaml'.
-
-    .PARAMETER Recurse
-    Whether to search subdirectories recursively. Defaults to $true.
 
     .OUTPUTS
     String[] - Array of absolute file paths that are candidates for encryption.
 
     .EXAMPLE
-    Get-SopsEncryptionCandidates -VaultPath 'C:\secrets'
+    Get-SopsEncryptionCandidates -Path 'C:\secrets'
     # Returns: @('C:\secrets\config.yaml', 'C:\secrets\api-key.yaml')
 
     .EXAMPLE
-    Get-SopsEncryptionCandidates -VaultPath '/vault' -FilePattern '*.yaml' -Recurse $true
-    # Recursively scans /vault for unencrypted YAML files matching .sops.yaml rules
-
-    .EXAMPLE
     # Migration workflow
-    $candidates = Get-SopsEncryptionCandidates -VaultPath 'C:\secrets'
+    $candidates = Get-SopsEncryptionCandidates -Path 'C:\secrets'
     foreach ($file in $candidates) {
         Write-Host "Encrypting: $file"
         sops --encrypt --in-place $file
@@ -45,62 +35,82 @@ function Get-SopsEncryptionCandidates {
 
     .EXAMPLE
     # CI/CD validation
-    $unencrypted = Get-SopsEncryptionCandidates -VaultPath $env:SECRETS_DIR
+    $unencrypted = Get-SopsEncryptionCandidates -Path $env:SECRETS_DIR
     if ($unencrypted.Count -gt 0) {
         throw "Security violation: Found unencrypted secret files"
     }
 
     .NOTES
-    Requires .sops.yaml to exist in VaultPath. Returns empty array if not found.
+    Requires .sops.yaml to exist in Path. Returns empty array if not found.
     Uses 'sops filestatus' for reliable encryption detection.
     Requires SOPS binary to be available in PATH.
+    File patterns are automatically derived from path_regex patterns in .sops.yaml.
+    Always searches recursively through all subdirectories.
     #>
     [CmdletBinding()]
     [OutputType([string[]])]
     param(
         [Parameter(Mandatory)]
         [ValidateScript({ Test-Path $_ -PathType Container })]
-        [string]$VaultPath,
-
-        [Parameter()]
-        [string]$FilePattern = '*.yaml',
-
-        [Parameter()]
-        [bool]$Recurse = $true
+        [string]$Path
     )
-
-    # Import private functions
-    $privateFunctionPath = Join-Path $PSScriptRoot '..' 'Private'
-    . (Join-Path $privateFunctionPath 'Get-SopsConfiguration.ps1')
-    . (Join-Path $privateFunctionPath 'Test-PathMatchesRegex.ps1')
-    . (Join-Path $privateFunctionPath 'Test-FileContainsKeys.ps1')
 
     # Initialize result
     $candidates = @()
 
     # Check if .sops.yaml exists
-    $config = Get-SopsConfiguration -VaultPath $VaultPath
+    $config = Get-SopsConfiguration -VaultPath $Path
     if (-not $config.Found) {
-        Write-Warning "No .sops.yaml configuration found in '$VaultPath'. Cannot determine encryption rules."
+        Write-Warning "No .sops.yaml configuration found in '$Path'. Cannot determine encryption rules."
         return @()
     }
 
-    # Find all files matching pattern
-    $findParams = @{
-        Path        = $VaultPath
-        Filter      = $FilePattern
-        File        = $true
-        Recurse     = $Recurse
-        ErrorAction = 'SilentlyContinue'
+    # Extract file patterns from creation_rules
+    $filePatterns = @()
+    foreach ($rule in $config.CreationRules) {
+        # Extract file extension from path_regex (e.g., '\.yaml$' -> '*.yaml')
+        if ($rule.PathRegex -match '\\\.([a-zA-Z0-9]+)\$\??$') {
+            $extension = $matches[1]
+            $pattern = "*.$extension"
+            if ($filePatterns -notcontains $pattern) {
+                $filePatterns += $pattern
+            }
+        }
     }
 
-    try {
-        $files = Get-ChildItem @findParams
+    # Fallback to *.yaml if no patterns extracted
+    if ($filePatterns.Count -eq 0) {
+        Write-Verbose "No file extensions found in path_regex patterns, defaulting to *.yaml"
+        $filePatterns = @('*.yaml')
     }
-    catch {
-        Write-Warning "Failed to enumerate files in '$VaultPath': $_"
+
+    Write-Verbose "Searching for files matching patterns: $($filePatterns -join ', ')"
+
+    # Find all files matching extracted patterns
+    $allFiles = @()
+    foreach ($pattern in $filePatterns) {
+        $findParams = @{
+            Path        = $Path
+            Filter      = $pattern
+            File        = $true
+            Recurse     = $true  # Always recurse
+            ErrorAction = 'SilentlyContinue'
+        }
+
+        try {
+            $allFiles += @(Get-ChildItem @findParams)
+        }
+        catch {
+            Write-Warning "Failed to enumerate files matching '$pattern' in '$Path': $_"
+        }
+    }
+
+    if ($allFiles.Count -eq 0) {
+        Write-Verbose "No files found matching patterns: $($filePatterns -join ', ')"
         return @()
     }
+
+    $files = $allFiles
 
     # Process each file
     foreach ($file in $files) {
@@ -125,7 +135,7 @@ function Get-SopsEncryptionCandidates {
         # Check 2: Find first matching rule by path_regex
         $matchingRule = $null
         foreach ($rule in $config.CreationRules) {
-            if (Test-PathMatchesRegex -FilePath $file.FullName -VaultPath $VaultPath -PathRegex $rule.PathRegex) {
+            if (Test-PathMatchesRegex -FilePath $file.FullName -VaultPath $Path -PathRegex $rule.PathRegex) {
                 $matchingRule = $rule
                 break  # First match wins
             }
