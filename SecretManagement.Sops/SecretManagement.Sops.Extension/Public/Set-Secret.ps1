@@ -197,8 +197,24 @@ function Set-Secret {
             Import-Module powershell-yaml -ErrorAction Stop
 
             if ($newContent -is [string]) {
-                # Plain string - wrap in a key-value structure (SOPS requires a map, not a scalar)
-                $yamlContent = @{ value = $newContent } | ConvertTo-Yaml
+                # Parse path-based syntax into setPaths
+                $setPaths = ConvertTo-SopsSetPathFromString -Secret $newContent
+
+                # Reconstruct hashtable from setPaths
+                $contentHash = @{}
+                foreach ($item in $setPaths) {
+                    $pathParts = $item.Path -replace '^\["|"\]$', '' -split '"\]\["'
+                    $current = $contentHash
+                    for ($i = 0; $i -lt ($pathParts.Count - 1); $i++) {
+                        if (-not $current.ContainsKey($pathParts[$i])) {
+                            $current[$pathParts[$i]] = @{}
+                        }
+                        $current = $current[$pathParts[$i]]
+                    }
+                    $current[$pathParts[-1]] = $item.Value
+                }
+
+                $yamlContent = $contentHash | ConvertTo-Yaml
             }
             else {
                 $yamlContent = $newContent | ConvertTo-Yaml
