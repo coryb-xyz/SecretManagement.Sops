@@ -3,6 +3,9 @@
     $testHelpersPath = Join-Path $PSScriptRoot 'TestHelpers.psm1'
     Import-Module $testHelpersPath -Force
 
+    # Save environment state (location, environment variables, registered vaults)
+    $script:testState = Initialize-TestEnvironment
+
     # Auto-bootstrap test data if missing
     if (-not (Initialize-TestDataIfMissing)) {
         throw "Cannot run tests: Test data initialization failed. Please ensure SOPS and age are installed."
@@ -10,9 +13,6 @@
 
     # Clean up any orphaned test vaults from previous runs
     Remove-OrphanedTestVaults
-
-    # Save original environment state
-    $script:OriginalEnvironment = Save-SopsEnvironment
 
     # Import the module
     $modulePath = Join-Path $PSScriptRoot '..' 'SecretManagement.Sops' 'SecretManagement.Sops.psd1'
@@ -35,10 +35,8 @@
 }
 
 AfterAll {
-    # Restore original environment state
-    if ($script:OriginalEnvironment) {
-        Restore-SopsEnvironment -State $script:OriginalEnvironment
-    }
+    # Restore environment state (location, environment variables, cleanup test vaults)
+    Restore-TestEnvironment -State $script:testState
 }
 
 Describe 'Test-SopsEncrypted' -Tag 'Unit', 'EncryptionFiltering' {

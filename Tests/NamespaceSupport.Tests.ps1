@@ -1,4 +1,4 @@
-﻿#Requires -Modules @{ ModuleName='Pester'; ModuleVersion='5.0.0' }
+#Requires -Modules @{ ModuleName='Pester'; ModuleVersion='5.0.0' }
 
 <#
 .SYNOPSIS
@@ -36,8 +36,8 @@ BeforeAll {
     # Clean up any orphaned test vaults from previous runs
     Remove-OrphanedTestVaults
 
-    # Save original environment state
-    $script:OriginalEnvironment = Save-SopsEnvironment
+    # Save environment state (location, environment variables, registered vaults) state
+    $script:testState = Initialize-TestEnvironment
 
     # Import the main module
     $modulePath = Join-Path $PSScriptRoot '..\SecretManagement.Sops\SecretManagement.Sops.psd1'
@@ -164,10 +164,8 @@ AfterAll {
         Remove-IsolatedTestVault -VaultName $script:TestVaultName
     }
 
-    # Restore original environment state
-    if ($script:OriginalEnvironment) {
-        Restore-SopsEnvironment -State $script:OriginalEnvironment
-    }
+    # Restore environment state (location, environment variables, cleanup test vaults) state
+    Restore-TestEnvironment -State $script:testState
 
     # TestDrive cleanup happens automatically via Pester
     # No need to manually remove $script:TestSecretsPath

@@ -824,6 +824,177 @@ Or skip tests requiring these tools.
     return $true
 }
 
+<#
+.SYNOPSIS
+    Saves current environment state before test execution.
+
+.DESCRIPTION
+    Captures current location, SOPS environment variables, and registered vaults
+    to enable restoration in Restore-TestEnvironment.
+
+.OUTPUTS
+    Hashtable with saved state for restoration.
+
+.EXAMPLE
+    BeforeAll {
+        $script:testState = Initialize-TestEnvironment
+    }
+    AfterAll {
+        Restore-TestEnvironment -State $script:testState
+    }
+#>
+function Initialize-TestEnvironment {
+    [CmdletBinding()]
+    [OutputType([hashtable])]
+    param()
+
+    $state = @{
+        Location = Get-Location
+        Environment = @{}
+        Vaults = @()
+    }
+
+    # Save SOPS-related environment variables
+    @('SOPS_AGE_KEY_FILE', 'SOPS_AGE_KEY', 'SOPS_AGE_RECIPIENTS', 'AZURE_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_CLIENT_SECRET') | ForEach-Object {
+        if (Test-Path "env:$_") {
+            $state.Environment[$_] = (Get-Item "env:$_" -ErrorAction SilentlyContinue).Value
+        }
+    }
+
+    # Save registered SecretVault list
+    try {
+        $state.Vaults = Get-SecretVault | Select-Object -ExpandProperty Name
+    }
+    catch {
+        # SecretManagement may not be loaded yet
+        $state.Vaults = @()
+    }
+
+    return $state
+}
+
+<#
+.SYNOPSIS
+    Restores environment state after test execution.
+
+.DESCRIPTION
+    Restores location, environment variables, and cleans up test vaults
+    created during test execution.
+
+.PARAMETER State
+    Hashtable returned from Initialize-TestEnvironment.
+
+.EXAMPLE
+    AfterAll {
+        Restore-TestEnvironment -State $script:testState
+    }
+#>
+function Restore-TestEnvironment {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [hashtable]$State
+    )
+
+    # Restore location
+    Set-Location $State.Location
+
+    # Restore environment variables
+    @('SOPS_AGE_KEY_FILE', 'SOPS_AGE_KEY', 'SOPS_AGE_RECIPIENTS', 'AZURE_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_CLIENT_SECRET') | ForEach-Object {
+        if ($State.Environment.ContainsKey($_)) {
+            [Environment]::SetEnvironmentVariable($_, $State.Environment[$_], 'Process')
+        }
+        else {
+            [Environment]::SetEnvironmentVariable($_, $null, 'Process')
+        }
+    }
+
+    # Unregister any test vaults created during tests
+    try {
+        $currentVaults = Get-SecretVault | Select-Object -ExpandProperty Name
+        $newVaults = $currentVaults | Where-Object { $_ -notin $State.Vaults }
+        $newVaults | ForEach-Object {
+            Unregister-SecretVault -Name $_ -ErrorAction SilentlyContinue
+        }
+    }
+    catch {
+        # Ignore cleanup errors
+    }
+}
+
+<#
+.SYNOPSIS
+    Creates and registers a temporary test vault with unique name.
+
+.DESCRIPTION
+    Registers a SecretVault with a GUID-based unique name for test isolation.
+    Returns a hashtable with vault name and cleanup scriptblock.
+
+.PARAMETER VaultPath
+    Path to use as vault root (typically $TestDrive).
+
+.PARAMETER CreateEncryptionRule
+    Whether to create .sops.yaml config in vault.
+
+.PARAMETER ExtensionModulePath
+    Path to SecretManagement.Sops.Extension module.
+
+.PARAMETER AdditionalParameters
+    Additional vault parameters (e.g., AgeKeyFile, AzureKeyVaultUrl).
+
+.OUTPUTS
+    Hashtable with Name (string) and Cleanup (scriptblock) keys.
+
+.EXAMPLE
+    $vault = New-TestVault -VaultPath $TestDrive -ExtensionModulePath $extensionModulePath
+    try {
+        Set-Secret -Name 'test' -Secret 'value' -VaultName $vault.Name
+    }
+    finally {
+        & $vault.Cleanup
+    }
+#>
+function New-TestVault {
+    [CmdletBinding()]
+    [OutputType([hashtable])]
+    param(
+        [Parameter(Mandatory)]
+        [string]$VaultPath,
+
+        [Parameter()]
+        [bool]$CreateEncryptionRule = $true,
+
+        [Parameter(Mandatory)]
+        [string]$ExtensionModulePath,
+
+        [Parameter()]
+        [hashtable]$AdditionalParameters = @{}
+    )
+
+    $vaultName = "TestVault_$(New-Guid)"
+
+    $vaultParams = @{
+        Path = $VaultPath
+        CreateEncryptionRule = $CreateEncryptionRule
+    }
+
+    # Merge additional parameters
+    foreach ($key in $AdditionalParameters.Keys) {
+        $vaultParams[$key] = $AdditionalParameters[$key]
+    }
+
+    Register-SecretVault -Name $vaultName -ModuleName $ExtensionModulePath -VaultParameters $vaultParams
+
+    $cleanup = {
+        Unregister-SecretVault -Name $vaultName -ErrorAction SilentlyContinue
+    }.GetNewClosure()
+
+    return @{
+        Name = $vaultName
+        Cleanup = $cleanup
+    }
+}
+
 # Export all functions
 Export-ModuleMember -Function @(
     'Test-SopsEncrypted'
@@ -842,4 +1013,7 @@ Export-ModuleMember -Function @(
     'Remove-IsolatedTestVault'
     'Remove-OrphanedTestVaults'
     'Initialize-TestDataIfMissing'
+    'Initialize-TestEnvironment'
+    'Restore-TestEnvironment'
+    'New-TestVault'
 )
