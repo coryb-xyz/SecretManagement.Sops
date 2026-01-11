@@ -48,33 +48,10 @@ function Invoke-SopsEncrypt {
 
     $sopsArgs += $FilePath
 
-    # Determine if we need to scope environment variables for this operation
-    if ($VaultParameters) {
-        $sopsEnv = Get-SopsEnvironment -VaultParameters $VaultParameters
-
-        if ($sopsEnv.Count -gt 0) {
-            # Execute with scoped environment variables
-            $output = Invoke-WithScopedEnv -EnvVars $sopsEnv -ScriptBlock {
-                & sops @sopsArgs 2>&1
-            }
-        }
-        else {
-            # No environment override needed - use existing environment
-            $output = & sops @sopsArgs 2>&1
-        }
-    }
-    else {
-        # Backward compatibility: no VaultParameters provided
-        $output = & sops @sopsArgs 2>&1
-    }
-
-    if ($LASTEXITCODE -ne 0) {
-        $errorMessage = $output -join "`n"
-        $formattedError = Format-SopsError -ErrorMessage $errorMessage -Operation 'encrypt' -VaultParameters $VaultParameters
-        throw $formattedError
-    }
+    # Use shared helper for environment scoping and error handling
+    $output = Invoke-SopsCommand -SopsArgs $sopsArgs -VaultParameters $VaultParameters -Operation 'encrypt'
 
     if (-not $InPlace) {
-        return ($output -join "`n")
+        return $output
     }
 }

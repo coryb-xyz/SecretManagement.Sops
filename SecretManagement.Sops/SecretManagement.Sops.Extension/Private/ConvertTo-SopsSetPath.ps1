@@ -1,9 +1,12 @@
-﻿function ConvertTo-SopsSetPath {
+function ConvertTo-SopsSetPath {
     <#
     .SYNOPSIS
-    Convert hashtable structure to SOPS --set JSONPath expressions.
+    Convert hashtable structure to SOPS --set JSONPath expressions (Extension wrapper).
 
     .DESCRIPTION
+    Extension wrapper that calls the main module's ConvertTo-SopsSetPath with
+    strict scalar validation enabled (ScalarBehavior = 'Throw').
+
     Recursively walks a hashtable/OrderedDictionary structure and generates
     SOPS --set compatible JSONPath expressions for each leaf value.
 
@@ -29,6 +32,10 @@
     foreach ($item in (ConvertTo-SopsSetPath -Object $patch)) {
         sops --set "$($item.Path) `"$($item.Value)`"" $filePath
     }
+
+    .NOTES
+    This consolidation shares implementation with the main module's ConvertTo-SopsSetPath.
+    The Extension version uses strict validation (throws on top-level scalars).
     #>
     [CmdletBinding()]
     param(
@@ -39,76 +46,13 @@
         [string]$Prefix = ''
     )
 
-    $results = @()
+    # Get the main module's implementation path
+    $parentModulePath = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    $mainFunctionPath = Join-Path $parentModulePath 'Private\ConvertTo-SopsSetPath.ps1'
 
-    # Handle different object types
-    if ($Object -is [hashtable] -or $Object -is [System.Collections.Specialized.OrderedDictionary]) {
-        foreach ($key in $Object.Keys) {
-            $value = $Object[$key]
-            $currentPath = if ($Prefix) {
-                "$Prefix[`"$key`"]"
-            }
- else {
-                "[`"$key`"]"
-            }
+    # Dot-source the main implementation
+    . $mainFunctionPath
 
-            # If value is a nested hashtable/OrderedDictionary, recurse
-            if ($value -is [hashtable] -or $value -is [System.Collections.Specialized.OrderedDictionary]) {
-                $results += ConvertTo-SopsSetPath -Object $value -Prefix $currentPath
-            }
-            # If value is null, handle specially
-            elseif ($null -eq $value) {
-                $results += @{
-                    Path  = $currentPath
-                    Value = $null
-                }
-            }
-            # Leaf value - add to results
-            else {
-                $results += @{
-                    Path  = $currentPath
-                    Value = $value
-                }
-            }
-        }
-    }
-    # Handle arrays
-    elseif ($Object -is [array]) {
-        for ($i = 0; $i -lt $Object.Count; $i++) {
-            $value = $Object[$i]
-            $currentPath = if ($Prefix) {
-                "$Prefix[$i]"
-            }
- else {
-                "[$i]"
-            }
-
-            # If value is a nested structure, recurse
-            if ($value -is [hashtable] -or $value -is [System.Collections.Specialized.OrderedDictionary]) {
-                $results += ConvertTo-SopsSetPath -Object $value -Prefix $currentPath
-            }
-            # Leaf value
-            else {
-                $results += @{
-                    Path  = $currentPath
-                    Value = $value
-                }
-            }
-        }
-    }
-    # Scalar value at top level
-    else {
-        if ($Prefix) {
-            $results += @{
-                Path  = $Prefix
-                Value = $Object
-            }
-        }
-        else {
-            # Top-level scalar - not valid for SOPS --set
-            throw "Cannot convert scalar value to SOPS path. Value must be a hashtable or OrderedDictionary."
-        }
-    }
-
-    return $results
+    # Call with Extension-specific behavior (strict scalar validation)
+    return ConvertTo-SopsSetPath -Object $Object -Prefix $Prefix -ScalarBehavior 'Throw'
 }

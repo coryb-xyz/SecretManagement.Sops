@@ -48,31 +48,12 @@ function Invoke-SopsUnset {
         throw "SOPS binary not found in PATH. Please install SOPS from https://github.com/getsops/sops/releases"
     }
 
-    # Determine if we need to scope environment variables for this operation
-    if ($VaultParameters) {
-        $sopsEnv = Get-SopsEnvironment -VaultParameters $VaultParameters
+    $sopsArgs = @('unset', $FilePath, $Path)
 
-        if ($sopsEnv.Count -gt 0) {
-            # Execute with scoped environment variables
-            $output = Invoke-WithScopedEnv -EnvVars $sopsEnv -ScriptBlock {
-                & sops unset $FilePath $Path 2>&1
-            }
-        }
-        else {
-            # No environment override needed - use existing environment
-            $output = & sops unset $FilePath $Path 2>&1
-        }
-    }
-    else {
-        # Backward compatibility: no VaultParameters provided
-        $output = & sops unset $FilePath $Path 2>&1
-    }
+    # Use shared helper for environment scoping and error handling
+    # Note: Invoke-SopsCommand returns a joined string, but this function historically returns array
+    $output = Invoke-SopsCommand -SopsArgs $sopsArgs -VaultParameters $VaultParameters -Operation 'unset'
 
-    if ($LASTEXITCODE -ne 0) {
-        $errorMsg = $output -join "`n"
-        $formattedError = Format-SopsError -ErrorMessage $errorMsg -Operation 'unset' -VaultParameters $VaultParameters
-        throw $formattedError
-    }
-
-    return $output
+    # Split output back to array for backward compatibility
+    return ($output -split "`n")
 }

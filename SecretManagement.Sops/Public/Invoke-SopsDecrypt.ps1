@@ -48,31 +48,6 @@ function Invoke-SopsDecrypt {
 
     $sopsArgs += $FilePath
 
-    # Determine if we need to scope environment variables for this operation
-    if ($VaultParameters) {
-        $sopsEnv = Get-SopsEnvironment -VaultParameters $VaultParameters
-
-        if ($sopsEnv.Count -gt 0) {
-            # Execute with scoped environment variables
-            $output = Invoke-WithScopedEnv -EnvVars $sopsEnv -ScriptBlock {
-                & sops @sopsArgs 2>&1
-            }
-        }
-        else {
-            # No environment override needed - use existing environment
-            $output = & sops @sopsArgs 2>&1
-        }
-    }
-    else {
-        # Backward compatibility: no VaultParameters provided
-        $output = & sops @sopsArgs 2>&1
-    }
-
-    if ($LASTEXITCODE -ne 0) {
-        $errorMessage = $output -join "`n"
-        $formattedError = Format-SopsError -ErrorMessage $errorMessage -Operation 'decrypt' -VaultParameters $VaultParameters
-        throw $formattedError
-    }
-
-    return ($output -join "`n")
+    # Use shared helper for environment scoping and error handling
+    return Invoke-SopsCommand -SopsArgs $sopsArgs -VaultParameters $VaultParameters -Operation 'decrypt'
 }

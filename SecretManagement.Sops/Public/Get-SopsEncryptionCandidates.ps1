@@ -28,9 +28,9 @@ function Get-SopsEncryptionCandidates {
     .EXAMPLE
     # Migration workflow
     $candidates = Get-SopsEncryptionCandidates -Path 'C:\secrets'
-    foreach ($file in $candidates) {
-        Write-Host "Encrypting: $file"
-        sops --encrypt --in-place $file
+    foreach ($candidateFile in $candidates) {
+        Write-Host "Encrypting: $candidateFile"
+        sops --encrypt --in-place $candidateFile
     }
 
     .EXAMPLE
@@ -66,29 +66,29 @@ function Get-SopsEncryptionCandidates {
     }
 
     # Extract file patterns from creation_rules
-    $filePatterns = @()
+    $candidateFilePatterns = @()
     foreach ($rule in $config.CreationRules) {
         # Extract file extension from path_regex (e.g., '\.yaml$' -> '*.yaml')
         if ($rule.PathRegex -match '\\\.([a-zA-Z0-9]+)\$\??$') {
             $extension = $matches[1]
             $pattern = "*.$extension"
-            if ($filePatterns -notcontains $pattern) {
-                $filePatterns += $pattern
+            if ($candidateFilePatterns -notcontains $pattern) {
+                $candidateFilePatterns += $pattern
             }
         }
     }
 
     # Fallback to *.yaml if no patterns extracted
-    if ($filePatterns.Count -eq 0) {
+    if ($candidateFilePatterns.Count -eq 0) {
         Write-Verbose "No file extensions found in path_regex patterns, defaulting to *.yaml"
-        $filePatterns = @('*.yaml')
+        $candidateFilePatterns = @('*.yaml')
     }
 
-    Write-Verbose "Searching for files matching patterns: $($filePatterns -join ', ')"
+    Write-Verbose "Searching for files matching patterns: $($candidateFilePatterns -join ', ')"
 
     # Find all files matching extracted patterns
     $allFiles = @()
-    foreach ($pattern in $filePatterns) {
+    foreach ($pattern in $candidateFilePatterns) {
         $findParams = @{
             Path        = $Path
             Filter      = $pattern
@@ -106,24 +106,24 @@ function Get-SopsEncryptionCandidates {
     }
 
     if ($allFiles.Count -eq 0) {
-        Write-Verbose "No files found matching patterns: $($filePatterns -join ', ')"
+        Write-Verbose "No files found matching patterns: $($candidateFilePatterns -join ', ')"
         return @()
     }
 
-    $files = $allFiles
+    $candidateFiles = $allFiles
 
     # Process each file
-    foreach ($file in $files) {
+    foreach ($candidateFile in $candidateFiles) {
         # Skip .sops.yaml itself
-        if ($file.Name -eq '.sops.yaml') {
+        if ($candidateFile.Name -eq '.sops.yaml') {
             continue
         }
 
         # Check 1: Unencrypted suffix exclusion (cheapest operation)
-        $fileNameWithoutExt = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
+        $candidateFileNameWithoutExt = [System.IO.Path]::GetFileNameWithoutExtension($candidateFile.Name)
         $matchesSuffix = $false
         foreach ($suffix in $config.UnencryptedSuffixes) {
-            if ($fileNameWithoutExt.EndsWith($suffix)) {
+            if ($candidateFileNameWithoutExt.EndsWith($suffix)) {
                 $matchesSuffix = $true
                 break
             }
@@ -135,7 +135,7 @@ function Get-SopsEncryptionCandidates {
         # Check 2: Find first matching rule by path_regex
         $matchingRule = $null
         foreach ($rule in $config.CreationRules) {
-            if (Test-PathMatchesRegex -FilePath $file.FullName -VaultPath $Path -PathRegex $rule.PathRegex) {
+            if (Test-PathMatchesRegex -FilePath $candidateFile.FullName -VaultPath $Path -PathRegex $rule.PathRegex) {
                 $matchingRule = $rule
                 break  # First match wins
             }
@@ -147,7 +147,7 @@ function Get-SopsEncryptionCandidates {
 
         # Check 3: Already encrypted? (moderate cost - shell invocation)
         try {
-            $statusResult = & sops filestatus $file.FullName 2>&1
+            $statusResult = & sops filestatus $candidateFile.FullName 2>&1
             if ($LASTEXITCODE -eq 0) {
                 $status = $statusResult | ConvertFrom-Json
                 if ($status.encrypted -eq $true) {
@@ -156,19 +156,19 @@ function Get-SopsEncryptionCandidates {
             }
         }
         catch {
-            Write-Warning "Failed to check encryption status for '$($file.FullName)': $_"
+            Write-Warning "Failed to check encryption status for '$($candidateFile.FullName)': $_"
             continue
         }
 
         # Check 4: Content key matching (most expensive - YAML parsing)
         if ($matchingRule.EncryptedRegex) {
-            if (-not (Test-FileContainsKeys -FilePath $file.FullName -EncryptedRegex $matchingRule.EncryptedRegex)) {
+            if (-not (Test-FileContainsKeys -FilePath $candidateFile.FullName -EncryptedRegex $matchingRule.EncryptedRegex)) {
                 continue  # Doesn't contain matching keys
             }
         }
 
         # Passed all checks - it's a candidate!
-        $candidates += $file.FullName
+        $candidates += $candidateFile.FullName
     }
 
     return $candidates
