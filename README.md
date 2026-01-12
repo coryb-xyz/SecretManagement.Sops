@@ -1,5 +1,10 @@
 # SecretManagement.Sops
 
+![Build Status](https://github.com/coryb-xyz/SecretManagement.Sops/workflows/CI/badge.svg)
+![GitHub Release](https://img.shields.io/github/v/release/coryb-xyz/SecretManagement.Sops)
+![License](https://img.shields.io/github/license/coryb-xyz/SecretManagement.Sops)
+![PowerShell Gallery](https://img.shields.io/badge/PowerShell%20Gallery-Coming%20Soon-blue)
+
 A PowerShell SecretManagement extension vault for [Mozilla SOPS](https://github.com/getsops/sops) (Secrets OPerationS). Provides native PowerShell integration for SOPS-encrypted secrets with support for Azure Key Vault, age, and Kubernetes Secret manifests.
 
 ## Overview
@@ -19,12 +24,17 @@ SecretManagement.Sops enables PowerShell developers to work with SOPS-encrypted 
 - [Overview](#overview)
 - [Requirements](#requirements)
 - [Installation](#installation)
+  - [From GitHub Releases](#from-github-releases-recommended)
+  - [From Source](#from-source)
+  - [Upgrading](#upgrading)
+  - [Uninstalling](#uninstalling)
 - [Quick Start](#quick-start)
 - [Vault Parameters](#vault-parameters)
 - [Namespace Support and Collision Detection](#namespace-support-and-collision-detection)
 - [Filtering and Encryption Control](#filtering-and-encryption-control)
 - [Write Operations](#write-operations)
 - [Troubleshooting](#troubleshooting)
+- [FAQ](#faq)
 - [Current Limitations](#current-limitations)
 - [Roadmap](#roadmap)
 - [Examples](#examples)
@@ -46,13 +56,18 @@ SecretManagement.Sops enables PowerShell developers to work with SOPS-encrypted 
 
 ## Installation
 
-### 1. Install SecretManagement Module
+### Prerequisites
+
+Before installing SecretManagement.Sops, ensure you have:
+
+1. **PowerShell**: Version 5.1 or later (PowerShell 7+ recommended)
+2. **Microsoft.PowerShell.SecretManagement**: The SecretManagement framework
 
 ```powershell
-Install-Module -Name Microsoft.PowerShell.SecretManagement -Repository PSGallery
+Install-Module -Name Microsoft.PowerShell.SecretManagement -Repository PSGallery -Scope CurrentUser
 ```
 
-### 2. Install SOPS
+3. **SOPS**: The encryption tool must be installed and available in PATH
 
 Download and install SOPS from: https://github.com/getsops/sops/releases
 
@@ -61,36 +76,112 @@ Verify installation:
 sops --version
 ```
 
-### 3. Install SecretManagement.Sops
+### From GitHub Releases (Recommended)
 
-**Manual Installation (Source):**
+Download the latest release from: https://github.com/coryb-xyz/SecretManagement.Sops/releases
 
-Download or clone this repository, then import the module:
-
+**PowerShell 7+ (recommended):**
 ```powershell
-# Import from source (for development)
-Import-Module .\SecretManagement.Sops\SecretManagement.Sops.psd1
+# Download the latest release ZIP file, then extract to your modules directory
+$modulePath = "$HOME\Documents\PowerShell\Modules"
+Expand-Archive -Path .\SecretManagement.Sops-v0.4.3.zip -DestinationPath $modulePath
+
+# Verify installation
+Get-Module -ListAvailable SecretManagement.Sops
 ```
 
-**Manual Installation (Built):**
+**Windows PowerShell 5.1:**
+```powershell
+# Extract to WindowsPowerShell modules directory
+$modulePath = "$HOME\Documents\WindowsPowerShell\Modules"
+Expand-Archive -Path .\SecretManagement.Sops-v0.4.3.zip -DestinationPath $modulePath
 
-For production use, build and install the compiled module:
+# Verify installation
+Get-Module -ListAvailable SecretManagement.Sops
+```
 
+**Quick one-liner installation (PowerShell 7+):**
+```powershell
+# Download and install latest release automatically
+$release = Invoke-RestMethod -Uri 'https://api.github.com/repos/coryb-xyz/SecretManagement.Sops/releases/latest'
+$zipUrl = $release.assets[0].browser_download_url
+Invoke-WebRequest -Uri $zipUrl -OutFile "$env:TEMP\SecretManagement.Sops.zip"
+Expand-Archive -Path "$env:TEMP\SecretManagement.Sops.zip" -DestinationPath "$HOME\Documents\PowerShell\Modules" -Force
+Remove-Item "$env:TEMP\SecretManagement.Sops.zip"
+```
+
+### From Source
+
+For development or if you want to build from source:
+
+**Development (direct import):**
+```powershell
+# Clone the repository
+git clone https://github.com/coryb-xyz/SecretManagement.Sops.git
+cd SecretManagement.Sops
+
+# Import from source
+Import-Module .\SecretManagement.Sops\SecretManagement.Sops.psd1 -Force
+```
+
+**Production build:**
 ```powershell
 # Build the module
 .\build.ps1 -Task Build
 
-# Import the built module
-Import-Module .\Build\SecretManagement.Sops\SecretManagement.Sops.psd1
+# Install to modules directory
+$modulePath = "$HOME\Documents\PowerShell\Modules"
+Copy-Item -Recurse -Force .\Build\SecretManagement.Sops $modulePath\
 ```
 
-**PowerShell Gallery (Coming Soon):**
+### PowerShell Gallery
+
+**Coming Soon** - Publication to PowerShell Gallery is planned for a future release.
+
+### Upgrading
+
+To upgrade to a newer version:
 
 ```powershell
-Install-Module -Name SecretManagement.Sops -Repository PSGallery
+# Unregister all vaults using this module first
+Get-SecretVault | Where-Object { $_.ModuleName -eq 'SecretManagement.Sops' } | ForEach-Object {
+    Unregister-SecretVault -Name $_.Name
+}
+
+# Remove old module version
+Remove-Module SecretManagement.Sops -Force -ErrorAction SilentlyContinue
+Remove-Item -Recurse "$HOME\Documents\PowerShell\Modules\SecretManagement.Sops" -Force
+
+# Install new version (follow "From GitHub Releases" instructions above)
+
+# Re-register your vaults
+Register-SecretVault -Name 'GitOpsSecrets' -ModuleName 'SecretManagement.Sops' -VaultParameters @{
+    Path = 'C:\repos\infrastructure\secrets'
+    Recurse = $true
+}
 ```
 
-### 4. Set Up Encryption Keys
+### Uninstalling
+
+To completely remove SecretManagement.Sops:
+
+```powershell
+# 1. Unregister all vaults
+Get-SecretVault | Where-Object { $_.ModuleName -eq 'SecretManagement.Sops' } | ForEach-Object {
+    Unregister-SecretVault -Name $_.Name
+}
+
+# 2. Remove the module
+Remove-Module SecretManagement.Sops -Force -ErrorAction SilentlyContinue
+
+# 3. Delete module files (PowerShell 7+)
+Remove-Item -Recurse "$HOME\Documents\PowerShell\Modules\SecretManagement.Sops" -Force
+
+# Or for Windows PowerShell 5.1
+Remove-Item -Recurse "$HOME\Documents\WindowsPowerShell\Modules\SecretManagement.Sops" -Force
+```
+
+### Set Up Encryption Keys
 
 **For age encryption (recommended for testing):**
 
@@ -442,6 +533,118 @@ Remove-Secret -Name 'apps/foo/config' -Vault 'GitOpsSecrets'
   Set-Secret -Name 'config' -Vault 'GitOpsSecrets' -Secret '.stringData.old-key: null'
   ```
 
+## FAQ
+
+### Which encryption backend should I use?
+
+- **age**: Best for getting started, simple local development, and GitOps workflows. No cloud dependencies required.
+- **Azure Key Vault**: Best for Azure-based infrastructure and enterprise compliance requirements.
+- **AWS KMS**: Best for AWS-based infrastructure and tight integration with AWS services.
+- **GCP KMS**: Best for Google Cloud infrastructure.
+- **PGP/GPG**: Legacy option, use age for new projects unless you have specific GPG requirements.
+
+### When should I use RequireEncryption?
+
+Use `RequireEncryption = $true` when:
+- You have mixed directories with both encrypted secrets and plaintext config files
+- You want to ensure only SOPS-encrypted files are accessible through the vault
+- You're onboarding a production environment and need an extra security layer
+- You want to prevent accidental exposure of plaintext files
+
+### How do I migrate from another secret management solution?
+
+```powershell
+# 1. Export secrets from your current vault to SOPS format
+Get-SecretInfo -Vault 'OldVault' | ForEach-Object {
+    $secret = Get-Secret -Name $_.Name -Vault 'OldVault' -AsPlainText
+    Set-Secret -Name $_.Name -Vault 'SopsVault' -Secret $secret
+}
+
+# 2. Verify all secrets migrated correctly
+Get-SecretInfo -Vault 'SopsVault' | Measure-Object | Select-Object -ExpandProperty Count
+
+# 3. Test retrieval
+Get-Secret -Name 'test-secret' -Vault 'SopsVault' -AsPlainText
+```
+
+### Why does Get-Secret return YAML instead of parsed objects?
+
+SecretManagement.Sops returns raw YAML strings to give you full control over parsing. This approach:
+- Avoids dependency bloat (no required YAML parser)
+- Lets you choose your preferred YAML library
+- Provides maximum flexibility for complex YAML structures
+
+To parse YAML, install `powershell-yaml`:
+```powershell
+Install-Module -Name powershell-yaml
+$yamlContent = Get-Secret -Name 'config' -Vault 'SopsVault' -AsPlainText
+$parsed = ConvertFrom-Yaml $yamlContent
+```
+
+### Can I use this with Kubernetes?
+
+Yes! SecretManagement.Sops has built-in support for Kubernetes Secret manifests:
+
+```powershell
+# Create a Kubernetes Secret
+$secret = New-KubernetesSecret -Name 'my-secret' -Namespace 'default' -Data @{
+    username = 'admin'
+    password = 'secretPassword123'
+}
+
+# Save and encrypt with SOPS
+$secret | Out-File -Encoding utf8 k8s-secret.yaml
+sops -e -i k8s-secret.yaml
+
+# Later, retrieve specific keys
+$password = Get-Secret -Name 'my-secret/password' -Vault 'K8sSecrets' -AsPlainText
+```
+
+### How do I handle secret rotation?
+
+```powershell
+# Update a secret
+Set-Secret -Name 'database/password' -Vault 'SopsVault' -Secret 'NewPassword123!'
+
+# The SOPS file is updated in-place, preserving structure and comments
+# Commit and push the encrypted file to your Git repository
+git add secrets/database.yaml
+git commit -m "Rotate database password"
+git push
+```
+
+### What's the difference between RelativePath and FileName naming strategies?
+
+- **RelativePath** (default): Uses the full folder path as the secret name
+  - `secrets/apps/prod/database.yaml` → `apps/prod/database`
+  - Best for organized hierarchies with namespaces
+
+- **FileName**: Uses only the filename without the path
+  - `secrets/apps/prod/database.yaml` → `database`
+  - Best for flat structures or when you manage organization outside the vault
+
+### Can I use this in CI/CD pipelines?
+
+Absolutely! Here's an example for GitHub Actions:
+
+```yaml
+- name: Decrypt secrets with SOPS
+  env:
+    SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+  run: |
+    # Register vault
+    pwsh -Command "
+      Register-SecretVault -Name 'PipelineSecrets' -ModuleName 'SecretManagement.Sops' -VaultParameters @{
+        Path = './secrets'
+        Recurse = \$true
+      }
+
+      # Use secrets
+      \$apiKey = Get-Secret -Name 'api-key' -Vault 'PipelineSecrets' -AsPlainText
+      Write-Host '::add-mask::' + \$apiKey
+    "
+```
+
 ## Troubleshooting
 
 ### SOPS Not Found
@@ -645,4 +848,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Version**: 0.3.0 - Full read/write support with Kubernetes Secret integration
+**Version**: 0.4.2 | [Releases](https://github.com/coryb-xyz/SecretManagement.Sops/releases) | [Issues](https://github.com/coryb-xyz/SecretManagement.Sops/issues)

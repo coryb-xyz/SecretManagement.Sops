@@ -29,14 +29,17 @@ Install-Module -Name PSScriptAnalyzer -Scope CurrentUser
 | Task | Description |
 |------|-------------|
 | `.` (default) | Full build pipeline: Clean → UpdateManifest → Analyze → Test |
-| `Build` | Complete build with compilation and validation: Clean → UpdateManifest → Analyze → Test → Compile → ValidateImport |
+| `Build` | Complete build with compilation and validation: UpdateManifest → Analyze → ValidateSource → Test → Compile → ValidateImport |
+| `BuildWithDocs` | Complete build including help documentation: UpdateManifest → Analyze → ValidateSource → Test → GenerateHelp → Compile → ValidateImport |
 | `Quick` | Fast iteration build (UpdateManifest → Analyze, skips tests and compilation) |
 | `Compile` | Compile module into Build directory (combines all functions into single .psm1) |
+| `GenerateHelp` | Generate external help files with platyPS (markdown + MAML) |
 | `UpdateManifest` | Auto-generate FunctionsToExport from Public folder |
 | `Analyze` | Run PSScriptAnalyzer for code quality checks |
 | `Test` | Run Pester tests |
 | `TestOnly` | Run tests without analysis |
 | `ValidateImport` | Compile and verify built module can be imported successfully |
+| `ValidateSource` | Verify source module can be imported |
 | `Clean` | Clean build artifacts (removes Build directory) |
 
 ## Build Task Details
@@ -193,16 +196,55 @@ Import-Module ./SecretManagement.Sops/SecretManagement.Sops.psd1
 Import-Module ./Build/SecretManagement.Sops/SecretManagement.Sops.psd1
 ```
 
+## Available Build Tasks
+
+| Task | Description | Command |
+|------|-------------|---------|
+| `.` (default) | Full build pipeline: Clean → UpdateManifest → Analyze → Test | `.\build.ps1` |
+| `Build` | Complete build with compilation and validation | `.\build.ps1 -Task Build` |
+| `BuildWithDocs` | Complete build including help documentation | `.\build.ps1 -Task BuildWithDocs` |
+| `Quick` | Fast iteration build (UpdateManifest → Analyze, skips tests) | `.\build.ps1 -Task Quick` |
+| `Compile` | Compile module into Build directory | `.\build.ps1 -Task Compile` |
+| `GenerateHelp` | Generate external help files with platyPS | `.\build.ps1 -Task GenerateHelp` |
+| `UpdateManifest` | Auto-generate FunctionsToExport from Public folder | `.\build.ps1 -Task UpdateManifest` |
+| `Analyze` | Run PSScriptAnalyzer for code quality checks | `.\build.ps1 -Task Analyze` |
+| `Test` | Run Pester tests | `.\build.ps1 -Task Test` |
+| `TestOnly` | Run tests without analysis | `.\build.ps1 -Task TestOnly` |
+| `ValidateImport` | Compile and verify built module can be imported | `.\build.ps1 -Task ValidateImport` |
+| `ValidateSource` | Verify source module can be imported | `.\build.ps1 -Task ValidateSource` |
+| `Clean` | Clean build artifacts (removes Build directory) | `.\build.ps1 -Task Clean` |
+
+## Help Documentation
+
+The build system includes platyPS integration for generating external help files:
+
+```powershell
+# Generate help documentation
+.\build.ps1 -Task GenerateHelp
+```
+
+This task:
+- Generates markdown help files in `docs/cmdlet-help/` from comment-based help
+- Creates MAML help file (`SecretManagement.Sops-help.xml`) in `SecretManagement.Sops/en-US/`
+- Enables `Get-Help` support for all module cmdlets
+- Automatically copied to Build output when compiling
+
+Help files are included in GitHub Releases and allow users to run:
+```powershell
+Get-Help Get-Secret -Full
+Get-Help Set-Secret -Examples
+```
+
 ## Future Enhancements
 
 Potential additions to the build process:
 
 1. ✅ **Module Compilation**: ~~Combine all Public/Private `.ps1` files into a single `.psm1` for performance~~ **DONE!**
-2. **Versioning**: Auto-increment version numbers based on git tags or changelog
-3. **Help Documentation**: Generate external help files from comment-based help using platyPS
-4. **Packaging**: Create publishable `.nupkg` for PowerShell Gallery
+2. ✅ **Help Documentation**: ~~Generate external help files from comment-based help using platyPS~~ **DONE!**
+3. ✅ **Packaging**: ~~Create publishable `.nupkg` for PowerShell Gallery~~ **Automated via GitHub Actions!**
+4. **Versioning**: Auto-increment version numbers based on git tags
 5. **Code Coverage**: Integrate Pester code coverage reporting
-6. **Multi-platform Testing**: Test on Windows, Linux, and macOS
+6. **Multi-platform Testing**: ~~Test on Windows, Linux, and macOS~~ **Partially done in CI (Windows + Linux)**
 7. **Publishing**: Automated publishing to PowerShell Gallery
 
 ## Troubleshooting
