@@ -473,7 +473,7 @@ stringData:
                 # Should throw with helpful error message
                 # Note: SecretManagement wraps our error in a generic message
                 { $malformedYaml | Set-Secret -Name $secretName -Vault $script:TestVaultName -ErrorAction Stop } |
-                    Should -Throw
+                    Should -Throw '*Unable to add secret*'
             }
             finally {
                 Remove-Secret -Name $secretName -Vault $script:TestVaultName -ErrorAction SilentlyContinue

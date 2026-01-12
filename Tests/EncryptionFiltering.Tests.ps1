@@ -83,7 +83,7 @@ Describe 'Test-SopsEncrypted' -Tag 'Unit', 'EncryptionFiltering' {
 
         It 'Throws when file does not exist' {
             $filePath = Join-Path $TestDataPath 'nonexistent.yaml'
-            { Test-SopsEncrypted -FilePath $filePath } | Should -Throw
+            { Test-SopsEncrypted -FilePath $filePath } | Should -Throw '*validation script*'
         }
     }
 

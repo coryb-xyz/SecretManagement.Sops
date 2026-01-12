@@ -126,7 +126,7 @@ Describe 'Integration Tests' -Tag 'ReadSupport', 'Integration', 'RequiresSops' {
         }
 
         It 'Throws on non-existent file' {
-            { Invoke-SopsDecrypt -FilePath 'C:\nonexistent.yaml' } | Should -Throw
+            { Invoke-SopsDecrypt -FilePath 'C:\nonexistent.yaml' } | Should -Throw '*validation script*'
         }
     }
 

@@ -341,7 +341,7 @@ creation_rules:
             } -ErrorAction SilentlyContinue
 
             { Set-Secret -Name 'test' -Secret 'value' -Vault $badVaultName -ErrorAction Stop } |
-                Should -Throw
+                Should -Throw '*Unable to add secret*'
 
             Unregister-SecretVault -Name $badVaultName -ErrorAction SilentlyContinue
         }
@@ -355,7 +355,7 @@ creation_rules:
 
             try {
                 { Set-Secret -Name 'test-fail' -Secret 'value' -Vault $script:TestVaultName -ErrorAction Stop } |
-                    Should -Throw
+                    Should -Throw '*Unable to add secret*'
             }
  finally {
                 # Restore .sops.yaml - ensure parent directory exists
@@ -583,7 +583,7 @@ creation_rules:
     Context 'Error Handling' -Tag 'ErrorHandling' {
         It 'Throws when secret does not exist' {
             { Remove-Secret -Name 'nonexistent-secret-12345' -Vault $script:TestVaultName -ErrorAction Stop } |
-                Should -Throw
+                Should -Throw '*Unable to remove secret*'
         }
 
         It 'Handles double removal gracefully' {
@@ -595,7 +595,7 @@ creation_rules:
 
             # Second removal should throw
             { Remove-Secret -Name $testName -Vault $script:TestVaultName -ErrorAction Stop } |
-                Should -Throw
+                Should -Throw '*Unable to remove secret*'
         }
 
         It 'Handles special characters in secret name' {
