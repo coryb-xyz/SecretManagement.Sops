@@ -241,8 +241,7 @@ See [docs/Building.md](docs/Building.md) for detailed build documentation.
 
 ## Reference
 
-- SOPS: https://github.com/mozilla/sops
+- SOPS: https://github.com/getsops/sops
 - age: https://github.com/FiloSottile/age
 - Azure CLI: https://learn.microsoft.com/cli/azure/
-- Yayaml: https://www.powershellgallery.com/packages/Yayaml
 - powershell-yaml: https://www.powershellgallery.com/packages/powershell-yaml

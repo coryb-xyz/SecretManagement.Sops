@@ -9,31 +9,31 @@
 @{
 
     # Script module or binary module file associated with this manifest.
-    RootModule = 'SecretManagement.Sops.psm1'
+    RootModule           = 'SecretManagement.Sops.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.4.2'
+    ModuleVersion        = '0.4.3'
 
     # Supported PSEditions
     CompatiblePSEditions = 'Desktop', 'Core'
 
     # ID used to uniquely identify this module
-    GUID = 'd9134320-f7b9-4391-8f35-298108b60fba'
+    GUID                 = 'd9134320-f7b9-4391-8f35-298108b60fba'
 
     # Author of this module
-    Author = 'SecretManagement.Sops Contributors'
+    Author               = 'SecretManagement.Sops Contributors'
 
     # Company or vendor of this module
-    CompanyName          = 'Community'
+    CompanyName = 'Community'
 
     # Copyright statement for this module
-    Copyright = '(c) 2025 SecretManagement.Sops Contributors. All rights reserved.'
+    Copyright            = '(c) 2025 SecretManagement.Sops Contributors. All rights reserved.'
 
     # Description of the functionality provided by this module
-    Description = 'A PowerShell SecretManagement extension vault for Mozilla SOPS (Secrets OPerationS). Provides native PowerShell integration for SOPS-encrypted secrets with support for Azure Key Vault, age, and Kubernetes Secret manifests.'
+    Description          = 'A PowerShell SecretManagement extension vault for Mozilla SOPS (Secrets OPerationS). Provides native PowerShell integration for SOPS-encrypted secrets with support for Azure Key Vault, age, and Kubernetes Secret manifests.'
 
     # Minimum version of the PowerShell engine required by this module
-    PowerShellVersion = '5.1'
+    PowerShellVersion    = '5.1'
 
     # Name of the PowerShell host required by this module
     # PowerShellHostName = ''
@@ -51,7 +51,7 @@
     # ProcessorArchitecture = ''
 
     # Modules that must be imported into the global environment prior to importing this module
-    RequiredModules = @(@{ModuleName = 'Microsoft.PowerShell.SecretManagement'; ModuleVersion = '1.1.0'; })
+    RequiredModules      = @(@{ModuleName = 'Microsoft.PowerShell.SecretManagement'; ModuleVersion = '1.1.0'; })
 
     # Assemblies that must be loaded prior to importing this module
     # RequiredAssemblies = @()
@@ -66,21 +66,21 @@
     # FormatsToProcess = @()
 
     # Modules to import as nested modules of the module specified in RootModule/ModuleToProcess
-    NestedModules = @('.\SecretManagement.Sops.Extension\SecretManagement.Sops.Extension.psd1')
+    NestedModules        = @('.\SecretManagement.Sops.Extension\SecretManagement.Sops.Extension.psd1')
 
     # Functions to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no functions to export.
-    FunctionsToExport    = 'Get-SecretIndex', 'Get-SecretIndexEntry', 'Get-SopsEncryptionCandidates',
+    FunctionsToExport = 'Get-SecretIndex', 'Get-SecretIndexEntry', 'Get-SopsEncryptionCandidates',
     'Invoke-SopsDecrypt', 'Invoke-SopsEncrypt', 'Invoke-SopsSet', 'Invoke-SopsUnset',
     'New-KubernetesSecret', 'Resolve-SecretName', 'Test-SopsAvailable'
 
     # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.
-    CmdletsToExport      = @()
+    CmdletsToExport = @()
 
     # Variables to export from this module
     # VariablesToExport = @()
 
     # Aliases to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no aliases to export.
-    AliasesToExport = @()
+    AliasesToExport      = @()
 
     # DSC resources to export from this module
     # DscResourcesToExport = @()
@@ -92,7 +92,7 @@
     # FileList = @()
 
     # Private data to pass to the module specified in RootModule/ModuleToProcess. This may also contain a PSData hashtable with additional module metadata used by PowerShell.
-    PrivateData = @{
+    PrivateData          = @{
 
         PSData = @{
 
@@ -100,16 +100,34 @@
             Tags = 'SecretManagement', 'SOPS', 'Secrets', 'Encryption', 'Kubernetes', 'GitOps', 'FluxCD', 'AzureKeyVault', 'age'
 
             # A URL to the license for this module.
-            # LicenseUri = ''
+            LicenseUri = 'https://github.com/coryb-xyz/SecretManagement.Sops/blob/main/license'
 
             # A URL to the main website for this project.
-            # ProjectUri = ''
+            ProjectUri = 'https://github.com/coryb-xyz/SecretManagement.Sops'
 
             # A URL to an icon representing this module.
             # IconUri = ''
 
             # ReleaseNotes of this module
-            ReleaseNotes = '## 0.3.0 (2025-01-30)
+            ReleaseNotes = '## 0.4.3 (2025-01-11)
+
+### Documentation
+- Comprehensive installation guide including GitHub Releases
+- Added FAQ section with 8 common questions
+- Added Upgrading and Uninstalling sections
+- Added badges (build status, release, license)
+- External help files (Get-Help support) with platyPS
+- Updated all documentation links and references
+
+### Build System
+- Added GenerateHelp task for external help generation
+- Added BuildWithDocs task for complete build with documentation
+- Help files automatically included in releases
+
+### Metadata
+- Added LicenseUri and ProjectUri for PSGallery readiness
+
+## 0.4.2 (2025-01-11)
 
 ### Added
 - Full SecretManagement vault implementation for SOPS with read/write support

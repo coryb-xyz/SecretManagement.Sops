@@ -225,6 +225,16 @@ Import-Module `$parentModulePath -Force
     $destExtensionManifest = Join-Path $extensionPath 'SecretManagement.Sops.Extension.psd1'
     Copy-Item $sourceExtensionManifest $destExtensionManifest
 
+    # Copy help files if they exist
+    $sourceHelpPath = Join-Path $SourcePath 'en-US'
+    if (Test-Path $sourceHelpPath) {
+        Write-Build Gray 'Copying help files...'
+        $destHelpPath = Join-Path $BuildModulePath 'en-US'
+        $null = New-Item -ItemType Directory -Path $destHelpPath -Force
+        Copy-Item "$sourceHelpPath\*" $destHelpPath -Recurse -Force
+        Write-Build Gray "  Copied help files to: $destHelpPath"
+    }
+
     Write-Build Green "Module compiled successfully to: $BuildModulePath"
 }
 
@@ -323,8 +333,79 @@ task ValidateImport Compile, {
     Write-Build Green 'Module import validation passed'
 }
 
+# Synopsis: Generate external help files with platyPS
+task GenerateHelp {
+    Write-Build Green 'Generating external help documentation with platyPS...'
+
+    # Check if platyPS is available
+    if (-not (Get-Module -ListAvailable -Name platyPS)) {
+        Write-Build Yellow 'platyPS module not found - installing...'
+        Install-Module -Name platyPS -Scope CurrentUser -Force -SkipPublisherCheck
+    }
+
+    Import-Module platyPS -Force
+
+    # Create help output directory
+    $helpPath = Join-Path $SourcePath 'en-US'
+    if (-not (Test-Path $helpPath)) {
+        $null = New-Item -ItemType Directory -Path $helpPath -Force
+        Write-Build Gray "Created help directory: $helpPath"
+    }
+
+    # Remove module if already loaded to ensure fresh import
+    if (Get-Module $ModuleName) {
+        Remove-Module $ModuleName -Force
+    }
+
+    # Import the module from source
+    Import-Module $SourceManifestPath -Force
+
+    # Get all public functions
+    $commands = Get-Command -Module $ModuleName -CommandType Function
+
+    if ($commands.Count -eq 0) {
+        Write-Build Yellow 'No commands found to generate help for'
+        return
+    }
+
+    Write-Build Gray "Generating help for $($commands.Count) functions..."
+
+    # Generate markdown help files (if they don't exist)
+    $markdownPath = Join-Path $PSScriptRoot 'docs' 'cmdlet-help'
+    if (-not (Test-Path $markdownPath)) {
+        $null = New-Item -ItemType Directory -Path $markdownPath -Force
+    }
+
+    # Generate/update markdown help
+    try {
+        New-MarkdownHelp -Module $ModuleName -OutputFolder $markdownPath -Force -ErrorAction Stop | Out-Null
+        Write-Build Gray "  Generated/updated markdown help in: $markdownPath"
+    }
+    catch {
+        Write-Build Yellow "  Markdown generation warning: $_"
+    }
+
+    # Generate external MAML help file from markdown
+    try {
+        $mamlFile = Join-Path $helpPath "$ModuleName-help.xml"
+        New-ExternalHelp -Path $markdownPath -OutputPath $helpPath -Force -ErrorAction Stop | Out-Null
+        Write-Build Green "  Generated MAML help file: $mamlFile"
+    }
+    catch {
+        Write-Build Yellow "  MAML generation warning: $_"
+    }
+
+    # Clean up
+    Remove-Module $ModuleName -Force -ErrorAction SilentlyContinue
+
+    Write-Build Green 'Help documentation generated successfully'
+}
+
 # Synopsis: Full build with compilation and validation
 task Build UpdateManifest, Analyze, ValidateSource, Test, Compile, ValidateImport
+
+# Synopsis: Complete build including help documentation
+task BuildWithDocs UpdateManifest, Analyze, ValidateSource, Test, GenerateHelp, Compile, ValidateImport
 
 # Synopsis: Quick build without tests or compilation (for rapid iteration)
 task Quick UpdateManifest, Analyze
