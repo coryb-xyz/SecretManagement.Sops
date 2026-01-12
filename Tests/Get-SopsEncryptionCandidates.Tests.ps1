@@ -3,6 +3,9 @@ BeforeAll {
     $testHelpersPath = Join-Path $PSScriptRoot 'TestHelpers.psm1'
     Import-Module $testHelpersPath -Force
 
+    # Save environment state (location, environment variables, registered vaults)
+    $script:testState = Initialize-TestEnvironment
+
     # Dot-source the private functions
     $privateFunctions = @(
         'Get-SopsConfiguration.ps1',
@@ -24,6 +27,11 @@ BeforeAll {
 
     # Import powershell-yaml for test setup
     Import-Module powershell-yaml -ErrorAction Stop
+}
+
+AfterAll {
+    # Restore environment state (location, environment variables, cleanup test vaults)
+    Restore-TestEnvironment -State $script:testState
 }
 
 Describe 'Test-PathMatchesRegex' {

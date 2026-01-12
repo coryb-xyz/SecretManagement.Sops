@@ -1,5 +1,7 @@
 ﻿function Get-VaultParameters {
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseSingularNouns', '')]
+    # Function returns a hashtable of multiple vault parameters, so plural is appropriate
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseSingularNouns', '',
+        Justification = 'Returns collection of parameters as hashtable')]
     <#
     .SYNOPSIS
     Gets vault parameters with defaults applied.

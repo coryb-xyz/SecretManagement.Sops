@@ -1,15 +1,23 @@
 function ConvertTo-SecretYaml {
     <#
     .SYNOPSIS
-    Convert secret values to YAML-compatible structure (Extension version with YAML parsing).
+    Convert various secret types to YAML-compatible structure.
 
     .DESCRIPTION
-    Extension version of ConvertTo-SecretYaml that adds:
-    - Path-based syntax detection (e.g., ".stringData.password: value")
-    - YAML string parsing for structured content
+    Converts SecretManagement framework secret types (String, SecureString,
+    PSCredential, Hashtable, Byte[]) to structures suitable for YAML serialization.
 
-    This is an enhanced version of the Public module's ConvertTo-SecretYaml with additional
-    string handling capabilities needed for Set-Secret operations.
+    Extension version: This function is identical to the main module's version,
+    but always enables ExtensionPath syntax detection and YAML parsing features
+    by default for Set-Secret operations.
+
+    Per user requirements:
+    - String values with path syntax preserved (e.g., ".field: value")
+    - YAML strings parsed to hashtables when possible
+    - SecureString converted to plain text
+    - PSCredential converted to username/password hashtable
+    - Hashtable used as-is (especially for K8s secrets with apiVersion/kind/metadata)
+    - Byte[] converted to base64 string
 
     .PARAMETER Secret
     The secret object to convert.
@@ -18,15 +26,28 @@ function ConvertTo-SecretYaml {
     The name of the secret (used for context in error messages).
 
     .OUTPUTS
-    Object - A YAML-compatible structure (String or Hashtable).
+    Object - A YAML-compatible structure.
 
     .EXAMPLE
-    ConvertTo-SecretYaml -Secret '.stringData.password: value' -Name 'myapp'
-    # Returns: '.stringData.password: value' (path syntax preserved)
+    ConvertTo-SecretYaml -Secret 'myPassword' -Name 'db-password'
+    # Returns: 'myPassword'
 
     .EXAMPLE
-    ConvertTo-SecretYaml -Secret "apiVersion: v1`nkind: Secret" -Name 'k8s'
-    # Returns: Parsed hashtable structure
+    ConvertTo-SecretYaml -Secret (ConvertTo-SecureString 'pass' -AsPlainText -Force) -Name 'api-key'
+    # Returns: 'pass'
+
+    .EXAMPLE
+    ConvertTo-SecretYaml -Secret @{ username = 'admin'; password = 'secret' } -Name 'creds'
+    # Returns: @{ username = 'admin'; password = 'secret' }
+
+    .EXAMPLE
+    $k8sSecret = @{ apiVersion = 'v1'; kind = 'Secret'; stringData = @{ key = 'value' } }
+    ConvertTo-SecretYaml -Secret $k8sSecret -Name 'myapp'
+    # Returns: $k8sSecret (as-is, per user preference for K8s secrets)
+
+    .NOTES
+    This implementation is consolidated with the main module's ConvertTo-SecretYaml.
+    The Extension version has path syntax detection and YAML parsing always enabled.
     #>
     [CmdletBinding()]
     param(
@@ -37,8 +58,9 @@ function ConvertTo-SecretYaml {
         [string]$Name
     )
 
-    # Extension-specific logic for strings: check for path syntax and YAML parsing
+    # Handle different secret types
     if ($Secret -is [string]) {
+        # Extension-specific logic: check for path syntax and YAML parsing
         # IMPORTANT: Check for path-based syntax FIRST before trying YAML parsing
         # Path syntax like ".stringData.password: value" is technically valid YAML,
         # but we need to preserve it as a string for ConvertTo-SopsSetPathFromString
@@ -72,12 +94,12 @@ function ConvertTo-SecretYaml {
         }
         catch {
             # Not valid YAML or YAML module not available - fall through to plain string handling
+            Write-Verbose "YAML parsing failed for secret '$Name': $_"
         }
 
         # Plain string - return as-is
         return $Secret
     }
-    # --- Core type conversion logic (shared with Public module) ---
     elseif ($Secret -is [System.Security.SecureString]) {
         # Convert SecureString to plain text
         try {
@@ -101,7 +123,7 @@ function ConvertTo-SecretYaml {
         }
     }
     elseif ($Secret -is [byte[]]) {
-        # Convert byte array to base64 string
+        # Convert byte array to base64 string (Extension uses simple string format)
         $base64 = [Convert]::ToBase64String($Secret)
         return $base64
     }
@@ -114,7 +136,7 @@ function ConvertTo-SecretYaml {
         return $ht
     }
     else {
-        # Unsupported type
+        # Unsupported type - Extension module throws for clarity
         throw "Unsupported secret type: $($Secret.GetType().FullName). Supported types: String, SecureString, PSCredential, Byte[], Hashtable"
     }
 }

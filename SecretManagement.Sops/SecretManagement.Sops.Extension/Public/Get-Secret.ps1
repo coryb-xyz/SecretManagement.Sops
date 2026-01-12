@@ -69,14 +69,13 @@ function Get-Secret {
             return $null
         }
 
-        # Convert from YAML to typed PowerShell object
-        $typedSecret = ConvertFrom-SecretYaml -YamlContent $decryptedYaml
-
+        # Return raw YAML string
+        # Users can parse with their preferred YAML parser if needed
         # Use Write-Output -NoEnumerate for arrays to prevent unwrapping
-        if ($typedSecret -is [array]) {
-            return (Write-Output -NoEnumerate $typedSecret)
+        if ($decryptedYaml -is [array]) {
+            return (Write-Output -NoEnumerate $decryptedYaml)
         }
-        return $typedSecret
+        return $decryptedYaml
     }
     catch {
         throw "Failed to decrypt secret '$Name': $_"

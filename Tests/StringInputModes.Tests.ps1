@@ -1,4 +1,4 @@
-﻿#Requires -Modules @{ ModuleName='Pester'; ModuleVersion='5.0.0' }
+#Requires -Modules @{ ModuleName='Pester'; ModuleVersion='5.0.0' }
 
 <#
 .SYNOPSIS
@@ -27,8 +27,8 @@ BeforeAll {
     # Clean up any orphaned test vaults from previous runs
     Remove-OrphanedTestVaults
 
-    # Save original environment state
-    $script:OriginalEnvironment = Save-SopsEnvironment
+    # Save environment state (location, environment variables, registered vaults) state
+    $script:testState = Initialize-TestEnvironment
 
     # Import the main module
     $modulePath = Join-Path $PSScriptRoot '..\SecretManagement.Sops\SecretManagement.Sops.psd1'
@@ -53,10 +53,8 @@ BeforeAll {
 }
 
 AfterAll {
-    # Restore original environment state
-    if ($script:OriginalEnvironment) {
-        Restore-SopsEnvironment -State $script:OriginalEnvironment
-    }
+    # Restore environment state (location, environment variables, cleanup test vaults) state
+    Restore-TestEnvironment -State $script:testState
 }
 
 Describe 'Set-Secret with String Input Modes' -Tag 'StringInputModes', 'Integration' {
@@ -475,7 +473,7 @@ stringData:
                 # Should throw with helpful error message
                 # Note: SecretManagement wraps our error in a generic message
                 { $malformedYaml | Set-Secret -Name $secretName -Vault $script:TestVaultName -ErrorAction Stop } |
-                    Should -Throw
+                    Should -Throw '*Unable to add secret*'
             }
             finally {
                 Remove-Secret -Name $secretName -Vault $script:TestVaultName -ErrorAction SilentlyContinue

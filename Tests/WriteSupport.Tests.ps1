@@ -1,4 +1,4 @@
-﻿#Requires -Modules @{ ModuleName='Pester'; ModuleVersion='5.0.0' }
+#Requires -Modules @{ ModuleName='Pester'; ModuleVersion='5.0.0' }
 
 <#
 .SYNOPSIS
@@ -33,8 +33,8 @@ BeforeAll {
     # Clean up any orphaned test vaults from previous runs
     Remove-OrphanedTestVaults
 
-    # Save original environment state
-    $script:OriginalEnvironment = Save-SopsEnvironment
+    # Save environment state (location, environment variables, registered vaults) state
+    $script:testState = Initialize-TestEnvironment
 
     # Import the main module
     $modulePath = Join-Path $PSScriptRoot '..\SecretManagement.Sops\SecretManagement.Sops.psd1'
@@ -59,10 +59,8 @@ BeforeAll {
 }
 
 AfterAll {
-    # Restore original environment state
-    if ($script:OriginalEnvironment) {
-        Restore-SopsEnvironment -State $script:OriginalEnvironment
-    }
+    # Restore environment state (location, environment variables, cleanup test vaults) state
+    Restore-TestEnvironment -State $script:testState
 }
 
 Describe 'Set-Secret' -Tag 'WriteSupport', 'Integration' {
@@ -136,7 +134,9 @@ creation_rules:
             $retrieved = Get-Secret -Name $script:TestSecretName -Vault $script:TestVaultName -AsPlainText
             # Should return raw YAML string with {value: ...} wrapper
             $retrieved | Should -BeOfType [string]
-            $retrieved | Should -Match "value:\s*$testValue"
+            Test-YamlContent -YamlContent $retrieved -ExpectedValues @{
+                'value' = $testValue
+            } | Should -Be $true
         }
 
         It 'Supports SecureString secret type' {
@@ -147,7 +147,9 @@ creation_rules:
             $retrieved = Get-Secret -Name $script:TestSecretName -Vault $script:TestVaultName -AsPlainText
             # Should return raw YAML string with {value: ...} wrapper
             $retrieved | Should -BeOfType [string]
-            $retrieved | Should -Match 'value:\s*secure-password-123'
+            Test-YamlContent -YamlContent $retrieved -ExpectedValues @{
+                'value' = 'secure-password-123'
+            } | Should -Be $true
         }
 
         It 'Supports PSCredential secret type' {
@@ -158,8 +160,10 @@ creation_rules:
             $retrieved = Get-Secret -Name $script:TestSecretName -Vault $script:TestVaultName -AsPlainText
             # Should return raw YAML string with username/password fields
             $retrieved | Should -BeOfType [string]
-            $retrieved | Should -Match 'username:\s*testuser'
-            $retrieved | Should -Match 'password:\s*testpass123'
+            Test-YamlContent -YamlContent $retrieved -ExpectedValues @{
+                'username' = 'testuser'
+                'password' = 'testpass123'
+            } | Should -Be $true
         }
 
         It 'Supports Hashtable secret type' {
@@ -175,10 +179,12 @@ creation_rules:
             $retrieved = Get-Secret -Name $script:TestSecretName -Vault $script:TestVaultName -AsPlainText
             # Should return raw YAML string with all hashtable fields
             $retrieved | Should -BeOfType [string]
-            $retrieved | Should -Match 'database_host:\s*postgres\.example\.com'
-            $retrieved | Should -Match 'database_port:\s*5432'
-            $retrieved | Should -Match 'database_name:\s*production'
-            $retrieved | Should -Match 'ssl_enabled:\s*true'
+            Test-YamlContent -YamlContent $retrieved -ExpectedValues @{
+                database_host = 'postgres.example.com'
+                database_port = 5432
+                database_name = 'production'
+                ssl_enabled = $true
+            } | Should -Be $true
         }
 
         It 'Supports byte array secret type' {
@@ -287,7 +293,9 @@ creation_rules:
             $retrieved = Get-Secret -Name $script:TestSecretName -Vault $script:TestVaultName -AsPlainText
             # Should return raw YAML string
             $retrieved | Should -BeOfType [string]
-            $retrieved | Should -Match 'value:\s*updated-value'
+            Test-YamlContent -YamlContent $retrieved -ExpectedValues @{
+                value = 'updated-value'
+            } | Should -Be $true
             $retrieved | Should -Not -Match 'original-value'
         }
 
@@ -299,8 +307,10 @@ creation_rules:
             $retrieved = Get-Secret -Name $script:TestSecretName -Vault $script:TestVaultName -AsPlainText
             # Should return raw YAML string with hashtable fields
             $retrieved | Should -BeOfType [string]
-            $retrieved | Should -Match 'key1:\s*value1'
-            $retrieved | Should -Match 'key2:\s*value2'
+            Test-YamlContent -YamlContent $retrieved -ExpectedValues @{
+                key1 = 'value1'
+                key2 = 'value2'
+            } | Should -Be $true
         }
 
         It 'Maintains SOPS encryption after update' {
@@ -331,7 +341,7 @@ creation_rules:
             } -ErrorAction SilentlyContinue
 
             { Set-Secret -Name 'test' -Secret 'value' -Vault $badVaultName -ErrorAction Stop } |
-                Should -Throw
+                Should -Throw '*Unable to add secret*'
 
             Unregister-SecretVault -Name $badVaultName -ErrorAction SilentlyContinue
         }
@@ -345,7 +355,7 @@ creation_rules:
 
             try {
                 { Set-Secret -Name 'test-fail' -Secret 'value' -Vault $script:TestVaultName -ErrorAction Stop } |
-                    Should -Throw
+                    Should -Throw '*Unable to add secret*'
             }
  finally {
                 # Restore .sops.yaml - ensure parent directory exists
@@ -444,9 +454,11 @@ creation_rules:
             $retrieved = Get-Secret -Name $script:TestK8sSecretName -Vault $script:K8sVaultName -AsPlainText
             # Should return raw YAML string with K8s manifest structure
             $retrieved | Should -BeOfType [string]
-            $retrieved | Should -Match 'kind:\s*Secret'
-            $retrieved | Should -Match 'api-key:\s*secret-api-key-value'
-            $retrieved | Should -Match 'db-password:\s*secret-db-password'
+            Test-YamlContent -YamlContent $retrieved -ExpectedValues @{
+                kind = 'Secret'
+                'stringData.api-key' = 'secret-api-key-value'
+                'stringData.db-password' = 'secret-db-password'
+            } | Should -Be $true
         }
 
         It 'Accepts YAML string input (e.g., from New-KubernetesSecret pipeline)' {
@@ -571,7 +583,7 @@ creation_rules:
     Context 'Error Handling' -Tag 'ErrorHandling' {
         It 'Throws when secret does not exist' {
             { Remove-Secret -Name 'nonexistent-secret-12345' -Vault $script:TestVaultName -ErrorAction Stop } |
-                Should -Throw
+                Should -Throw '*Unable to remove secret*'
         }
 
         It 'Handles double removal gracefully' {
@@ -583,7 +595,7 @@ creation_rules:
 
             # Second removal should throw
             { Remove-Secret -Name $testName -Vault $script:TestVaultName -ErrorAction Stop } |
-                Should -Throw
+                Should -Throw '*Unable to remove secret*'
         }
 
         It 'Handles special characters in secret name' {

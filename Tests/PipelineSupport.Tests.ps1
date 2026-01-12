@@ -29,8 +29,8 @@ BeforeAll {
     # Clean up orphaned test vaults
     Remove-OrphanedTestVaults
 
-    # Save original environment
-    $script:OriginalEnvironment = Save-SopsEnvironment
+    # Save environment state (location, environment variables, registered vaults)
+    $script:testState = Initialize-TestEnvironment
 
     # Import main module
     $modulePath = Join-Path $PSScriptRoot '..\SecretManagement.Sops\SecretManagement.Sops.psd1'
@@ -54,10 +54,8 @@ BeforeAll {
 }
 
 AfterAll {
-    # Restore original environment
-    if ($script:OriginalEnvironment) {
-        Restore-SopsEnvironment -State $script:OriginalEnvironment
-    }
+    # Restore environment state (location, environment variables, cleanup test vaults)
+    Restore-TestEnvironment -State $script:testState
 }
 
 Describe 'Set-Secret Pipeline Support' -Tag 'Pipeline', 'Integration' {

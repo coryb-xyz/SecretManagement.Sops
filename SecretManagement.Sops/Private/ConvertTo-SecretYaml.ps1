@@ -1,4 +1,4 @@
-﻿function ConvertTo-SecretYaml {
+function ConvertTo-SecretYaml {
     <#
     .SYNOPSIS
     Convert various secret types to YAML-compatible structure.
@@ -19,6 +19,14 @@
 
     .PARAMETER Name
     The name of the secret (used for context in error messages).
+
+    .PARAMETER EnablePathSyntaxDetection
+    Enable detection of path-based syntax (e.g., ".stringData.password: value").
+    Used by the Extension module for Set-Secret operations.
+
+    .PARAMETER EnableYamlParsing
+    Enable YAML string parsing to convert structured YAML strings to hashtables.
+    Used by the Extension module for Set-Secret operations.
 
     .OUTPUTS
     Object - A YAML-compatible structure.
@@ -46,11 +54,57 @@
         [object]$Secret,
 
         [Parameter(Mandatory)]
-        [string]$Name
+        [string]$Name,
+
+        [Parameter()]
+        [switch]$EnablePathSyntaxDetection,
+
+        [Parameter()]
+        [switch]$EnableYamlParsing
     )
 
     # Handle different secret types
     if ($Secret -is [string]) {
+        # Extension-specific logic for strings: check for path syntax and YAML parsing
+        if ($EnablePathSyntaxDetection -or $EnableYamlParsing) {
+            # Check for path-based syntax FIRST before trying YAML parsing
+            # Path syntax like ".stringData.password: value" is technically valid YAML,
+            # but we need to preserve it as a string for ConvertTo-SopsSetPathFromString
+            if ($EnablePathSyntaxDetection) {
+                # Requires Test-PathBasedSyntax function (Extension module only)
+                if (Get-Command Test-PathBasedSyntax -ErrorAction SilentlyContinue) {
+                    if (Test-PathBasedSyntax -InputString $Secret) {
+                        return $Secret
+                    }
+                }
+            }
+
+            # Try to parse as YAML if enabled
+            if ($EnableYamlParsing) {
+                try {
+                    Import-Module powershell-yaml -ErrorAction Stop
+                    $parsed = $Secret | ConvertFrom-Yaml -ErrorAction Stop
+
+                    # Check if we got a structured object
+                    if ($parsed -is [hashtable] -or $parsed -is [System.Collections.Specialized.OrderedDictionary]) {
+                        return $parsed
+                    }
+                    elseif ($null -ne $parsed -and $parsed -is [PSCustomObject]) {
+                        # Convert PSCustomObject to hashtable
+                        $ht = @{}
+                        $parsed.PSObject.Properties | ForEach-Object {
+                            $ht[$_.Name] = $_.Value
+                        }
+                        return $ht
+                    }
+                }
+                catch {
+                    # Not valid YAML or YAML module not available - fall through to plain string handling
+                    Write-Verbose "YAML parsing failed for secret '$Name': $_"
+                }
+            }
+        }
+
         # Return string as-is (plain text, per user preference)
         return $Secret
     }
@@ -78,9 +132,16 @@
     elseif ($Secret -is [byte[]]) {
         # Convert byte array to base64
         $base64 = [Convert]::ToBase64String($Secret)
-        return @{
-            data     = $base64
-            encoding = 'base64'
+
+        # Extension module uses simple base64 string, main module uses structured format
+        if ($EnableYamlParsing) {
+            return $base64
+        }
+        else {
+            return @{
+                data = $base64
+                encoding = 'base64'
+            }
         }
     }
     elseif ($Secret -is [System.Collections.IDictionary]) {
@@ -92,9 +153,15 @@
         return $ht
     }
     else {
-        # Attempt to use value as-is for other types
-        # This may work for simple types that serialize to YAML cleanly
-        Write-Warning "Secret '$Name' has unexpected type: $($Secret.GetType().FullName). Attempting to use as-is."
-        return $Secret
+        # Handle unexpected types
+        if ($EnableYamlParsing) {
+            # Extension module: throw for unsupported types
+            throw "Unsupported secret type: $($Secret.GetType().FullName). Supported types: String, SecureString, PSCredential, Byte[], Hashtable"
+        }
+        else {
+            # Main module: warn and attempt to use as-is
+            Write-Warning "Secret '$Name' has unexpected type: $($Secret.GetType().FullName). Attempting to use as-is."
+            return $Secret
+        }
     }
 }

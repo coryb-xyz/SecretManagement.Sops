@@ -13,6 +13,11 @@
     .PARAMETER Prefix
     Internal parameter used during recursion to track the current path.
 
+    .PARAMETER ScalarBehavior
+    Controls how top-level scalar values are handled:
+    - 'Wrap' (default): Wraps scalar in default 'value' key for graceful handling
+    - 'Throw': Throws an error for top-level scalars (strict validation)
+
     .OUTPUTS
     Array of hashtables with Path and Value properties.
 
@@ -36,7 +41,11 @@
         [object]$Object,
 
         [Parameter()]
-        [string]$Prefix = ''
+        [string]$Prefix = '',
+
+        [Parameter()]
+        [ValidateSet('Wrap', 'Throw')]
+        [string]$ScalarBehavior = 'Wrap'
     )
 
     $results = @()
@@ -54,7 +63,7 @@
 
             # If value is a nested hashtable/OrderedDictionary, recurse
             if ($value -is [hashtable] -or $value -is [System.Collections.Specialized.OrderedDictionary]) {
-                $results += ConvertTo-SopsSetPath -Object $value -Prefix $currentPath
+                $results += ConvertTo-SopsSetPath -Object $value -Prefix $currentPath -ScalarBehavior $ScalarBehavior
             }
             # If value is null, handle specially
             elseif ($null -eq $value) {
@@ -85,7 +94,7 @@
 
             # If value is a nested structure, recurse
             if ($value -is [hashtable] -or $value -is [System.Collections.Specialized.OrderedDictionary]) {
-                $results += ConvertTo-SopsSetPath -Object $value -Prefix $currentPath
+                $results += ConvertTo-SopsSetPath -Object $value -Prefix $currentPath -ScalarBehavior $ScalarBehavior
             }
             # Leaf value
             else {
@@ -105,12 +114,18 @@
             }
         }
         else {
-            # Top-level scalar - wrap in a default structure
-            # This allows graceful handling similar to ConvertTo-SopsSetPathFromString
-            Write-Verbose "Scalar value provided without structure - wrapping in default 'value' key"
-            $results += @{
-                Path  = '["value"]'
-                Value = $Object
+            # Top-level scalar without prefix - behavior depends on parameter
+            if ($ScalarBehavior -eq 'Throw') {
+                # Extension module: strict validation
+                throw "Cannot convert scalar value to SOPS path. Value must be a hashtable or OrderedDictionary."
+            }
+            else {
+                # Main module: wrap in a default structure for graceful handling
+                Write-Verbose "Scalar value provided without structure - wrapping in default 'value' key"
+                $results += @{
+                    Path  = '["value"]'
+                    Value = $Object
+                }
             }
         }
     }
