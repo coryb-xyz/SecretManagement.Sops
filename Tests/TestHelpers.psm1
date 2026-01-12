@@ -995,6 +995,78 @@ function New-TestVault {
     }
 }
 
+<#
+.SYNOPSIS
+    Validates YAML content by parsing structure instead of regex matching.
+
+.DESCRIPTION
+    Parses YAML string and validates specific paths contain expected values.
+    More robust than regex assertions as it handles formatting variations.
+
+.PARAMETER YamlContent
+    Raw YAML string to parse and validate.
+
+.PARAMETER ExpectedValues
+    Hashtable of JSONPath-like keys to expected values.
+    Example: @{ 'stringData.api-key' = 'secret123'; 'metadata.name' = 'prod-config' }
+
+.OUTPUTS
+    Boolean - $true if all expected values match, $false otherwise.
+
+.EXAMPLE
+    $decrypted = Invoke-SopsDecrypt -FilePath $filePath -VaultParameters $params
+    Test-YamlContent -YamlContent $decrypted -ExpectedValues @{
+        'stringData.api-key' = 'super-secret'
+        'stringData.db-password' = 'prod-db-pass'
+    } | Should -Be $true
+#>
+function Test-YamlContent {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory)]
+        [string]$YamlContent,
+
+        [Parameter(Mandatory)]
+        [hashtable]$ExpectedValues
+    )
+
+    try {
+        Import-Module powershell-yaml -ErrorAction Stop
+        $parsed = $YamlContent | ConvertFrom-Yaml
+
+        foreach ($key in $ExpectedValues.Keys) {
+            $pathParts = $key -split '\.'
+            $current = $parsed
+
+            foreach ($part in $pathParts) {
+                if ($current -isnot [hashtable] -and $current -isnot [System.Collections.Specialized.OrderedDictionary]) {
+                    Write-Verbose "Path '$key' navigation failed at '$part' - not a hashtable"
+                    return $false
+                }
+
+                if (-not $current.ContainsKey($part)) {
+                    Write-Verbose "Path '$key' not found - missing key '$part'"
+                    return $false
+                }
+
+                $current = $current[$part]
+            }
+
+            if ($current -ne $ExpectedValues[$key]) {
+                Write-Verbose "Path '$key' value mismatch - expected '$($ExpectedValues[$key])', got '$current'"
+                return $false
+            }
+        }
+
+        return $true
+    }
+    catch {
+        Write-Verbose "YAML parsing failed: $_"
+        return $false
+    }
+}
+
 # Export all functions
 Export-ModuleMember -Function @(
     'Test-SopsEncrypted'
@@ -1016,4 +1088,5 @@ Export-ModuleMember -Function @(
     'Initialize-TestEnvironment'
     'Restore-TestEnvironment'
     'New-TestVault'
+    'Test-YamlContent'
 )

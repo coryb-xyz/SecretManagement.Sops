@@ -3,12 +3,20 @@ BeforeAll {
     $testHelpersPath = Join-Path $PSScriptRoot 'TestHelpers.psm1'
     Import-Module $testHelpersPath -Force
 
+    # Save environment state (location, environment variables, registered vaults)
+    $script:testState = Initialize-TestEnvironment
+
     # Dot-source the private function
     $functionPath = Join-Path $PSScriptRoot '..' 'SecretManagement.Sops' 'Private' 'Get-SopsConfiguration.ps1'
     . $functionPath
 
     # Import powershell-yaml for test setup
     Import-Module powershell-yaml -ErrorAction Stop
+}
+
+AfterAll {
+    # Restore environment state (location, environment variables, cleanup test vaults)
+    Restore-TestEnvironment -State $script:testState
 }
 
 Describe 'Get-SopsConfiguration' {

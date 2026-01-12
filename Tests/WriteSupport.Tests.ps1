@@ -134,7 +134,9 @@ creation_rules:
             $retrieved = Get-Secret -Name $script:TestSecretName -Vault $script:TestVaultName -AsPlainText
             # Should return raw YAML string with {value: ...} wrapper
             $retrieved | Should -BeOfType [string]
-            $retrieved | Should -Match "value:\s*$testValue"
+            Test-YamlContent -YamlContent $retrieved -ExpectedValues @{
+                'value' = $testValue
+            } | Should -Be $true
         }
 
         It 'Supports SecureString secret type' {
@@ -145,7 +147,9 @@ creation_rules:
             $retrieved = Get-Secret -Name $script:TestSecretName -Vault $script:TestVaultName -AsPlainText
             # Should return raw YAML string with {value: ...} wrapper
             $retrieved | Should -BeOfType [string]
-            $retrieved | Should -Match 'value:\s*secure-password-123'
+            Test-YamlContent -YamlContent $retrieved -ExpectedValues @{
+                'value' = 'secure-password-123'
+            } | Should -Be $true
         }
 
         It 'Supports PSCredential secret type' {
@@ -156,8 +160,10 @@ creation_rules:
             $retrieved = Get-Secret -Name $script:TestSecretName -Vault $script:TestVaultName -AsPlainText
             # Should return raw YAML string with username/password fields
             $retrieved | Should -BeOfType [string]
-            $retrieved | Should -Match 'username:\s*testuser'
-            $retrieved | Should -Match 'password:\s*testpass123'
+            Test-YamlContent -YamlContent $retrieved -ExpectedValues @{
+                'username' = 'testuser'
+                'password' = 'testpass123'
+            } | Should -Be $true
         }
 
         It 'Supports Hashtable secret type' {
@@ -173,10 +179,12 @@ creation_rules:
             $retrieved = Get-Secret -Name $script:TestSecretName -Vault $script:TestVaultName -AsPlainText
             # Should return raw YAML string with all hashtable fields
             $retrieved | Should -BeOfType [string]
-            $retrieved | Should -Match 'database_host:\s*postgres\.example\.com'
-            $retrieved | Should -Match 'database_port:\s*5432'
-            $retrieved | Should -Match 'database_name:\s*production'
-            $retrieved | Should -Match 'ssl_enabled:\s*true'
+            Test-YamlContent -YamlContent $retrieved -ExpectedValues @{
+                database_host = 'postgres.example.com'
+                database_port = 5432
+                database_name = 'production'
+                ssl_enabled = $true
+            } | Should -Be $true
         }
 
         It 'Supports byte array secret type' {
@@ -285,7 +293,9 @@ creation_rules:
             $retrieved = Get-Secret -Name $script:TestSecretName -Vault $script:TestVaultName -AsPlainText
             # Should return raw YAML string
             $retrieved | Should -BeOfType [string]
-            $retrieved | Should -Match 'value:\s*updated-value'
+            Test-YamlContent -YamlContent $retrieved -ExpectedValues @{
+                value = 'updated-value'
+            } | Should -Be $true
             $retrieved | Should -Not -Match 'original-value'
         }
 
@@ -297,8 +307,10 @@ creation_rules:
             $retrieved = Get-Secret -Name $script:TestSecretName -Vault $script:TestVaultName -AsPlainText
             # Should return raw YAML string with hashtable fields
             $retrieved | Should -BeOfType [string]
-            $retrieved | Should -Match 'key1:\s*value1'
-            $retrieved | Should -Match 'key2:\s*value2'
+            Test-YamlContent -YamlContent $retrieved -ExpectedValues @{
+                key1 = 'value1'
+                key2 = 'value2'
+            } | Should -Be $true
         }
 
         It 'Maintains SOPS encryption after update' {
@@ -442,9 +454,11 @@ creation_rules:
             $retrieved = Get-Secret -Name $script:TestK8sSecretName -Vault $script:K8sVaultName -AsPlainText
             # Should return raw YAML string with K8s manifest structure
             $retrieved | Should -BeOfType [string]
-            $retrieved | Should -Match 'kind:\s*Secret'
-            $retrieved | Should -Match 'api-key:\s*secret-api-key-value'
-            $retrieved | Should -Match 'db-password:\s*secret-db-password'
+            Test-YamlContent -YamlContent $retrieved -ExpectedValues @{
+                kind = 'Secret'
+                'stringData.api-key' = 'secret-api-key-value'
+                'stringData.db-password' = 'secret-db-password'
+            } | Should -Be $true
         }
 
         It 'Accepts YAML string input (e.g., from New-KubernetesSecret pipeline)' {
