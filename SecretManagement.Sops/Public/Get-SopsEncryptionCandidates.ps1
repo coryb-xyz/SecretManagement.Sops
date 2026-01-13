@@ -42,8 +42,7 @@ function Get-SopsEncryptionCandidates {
 
     .NOTES
     Requires .sops.yaml to exist in Path. Returns empty array if not found.
-    Uses 'sops filestatus' for reliable encryption detection.
-    Requires SOPS binary to be available in PATH.
+    Uses Test-SopsEncrypted for fast, reliable encryption detection via streaming state machine.
     File patterns are automatically derived from path_regex patterns in .sops.yaml.
     Always searches recursively through all subdirectories.
     #>
@@ -145,19 +144,9 @@ function Get-SopsEncryptionCandidates {
             continue
         }
 
-        # Check 3: Already encrypted? (moderate cost - shell invocation)
-        try {
-            $statusResult = & sops filestatus $candidateFile.FullName 2>&1
-            if ($LASTEXITCODE -eq 0) {
-                $status = $statusResult | ConvertFrom-Json
-                if ($status.encrypted -eq $true) {
-                    continue  # Already encrypted, skip
-                }
-            }
-        }
-        catch {
-            Write-Warning "Failed to check encryption status for '$($candidateFile.FullName)': $_"
-            continue
+        # Check 3: Already encrypted? (fast - streaming check)
+        if (Test-SopsEncrypted -FilePath $candidateFile.FullName) {
+            continue  # Already encrypted, skip
         }
 
         # Check 4: Content key matching (most expensive - YAML parsing)
