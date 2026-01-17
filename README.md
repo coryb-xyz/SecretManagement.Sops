@@ -83,7 +83,7 @@ Download the latest release from: https://github.com/coryb-xyz/SecretManagement.
 ```powershell
 # Download the latest release ZIP file, then extract to your modules directory
 $modulePath = "$HOME\Documents\PowerShell\Modules"
-Expand-Archive -Path .\SecretManagement.Sops-v0.4.4.zip -DestinationPath $modulePath
+Expand-Archive -Path .\SecretManagement.Sops-v0.4.5.zip -DestinationPath $modulePath
 
 # Verify installation
 Get-Module -ListAvailable SecretManagement.Sops
@@ -93,7 +93,7 @@ Get-Module -ListAvailable SecretManagement.Sops
 ```powershell
 # Extract to WindowsPowerShell modules directory
 $modulePath = "$HOME\Documents\WindowsPowerShell\Modules"
-Expand-Archive -Path .\SecretManagement.Sops-v0.4.4.zip -DestinationPath $modulePath
+Expand-Archive -Path .\SecretManagement.Sops-v0.4.5.zip -DestinationPath $modulePath
 
 # Verify installation
 Get-Module -ListAvailable SecretManagement.Sops
@@ -847,4 +847,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Version**: 0.4.4 | [Releases](https://github.com/coryb-xyz/SecretManagement.Sops/releases) | [Issues](https://github.com/coryb-xyz/SecretManagement.Sops/issues)
+**Version**: 0.4.5 | [Releases](https://github.com/coryb-xyz/SecretManagement.Sops/releases) | [Issues](https://github.com/coryb-xyz/SecretManagement.Sops/issues)
