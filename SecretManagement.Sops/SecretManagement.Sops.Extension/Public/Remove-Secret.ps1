@@ -46,28 +46,19 @@ function Remove-Secret {
         [hashtable]$AdditionalParameters
     )
 
-    # 1. Get and validate vault parameters
-    try {
-        $params = Get-VaultParameters -AdditionalParameters $AdditionalParameters
-        Assert-VaultPath -Parameters $params
-    }
-    catch {
-        throw "Vault configuration error: $_"
-    }
+    $params = Get-VaultParameters -AdditionalParameters $AdditionalParameters
+    Assert-VaultPath -Parameters $params
 
-    # 2. Resolve secret name to file path
+    # Resolve secret name to file path
     $resolution = Resolve-SecretEntry -Name $Name -VaultParameters $params
-    $secretEntry = $resolution.Entry
-    $filePath = $secretEntry.FilePath
+    $filePath = $resolution.Entry.FilePath
 
-    # 3. Remove entire secret file
     if (-not (Test-Path $filePath)) {
         throw "Secret file not found: $filePath"
     }
 
     try {
         Remove-Item -Path $filePath -Force
-        # Success - no return value needed
     }
     catch {
         throw "Failed to remove secret file '$filePath': $_"

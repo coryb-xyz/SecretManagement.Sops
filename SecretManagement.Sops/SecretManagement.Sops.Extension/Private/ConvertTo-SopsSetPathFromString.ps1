@@ -61,12 +61,8 @@
 
         # Convert string literals "null" and "$null" to PowerShell $null
         # This enables key removal: ".stringData.host: null" removes the key
-        $value = if ($extractedValue -eq 'null' -or $extractedValue -eq '$null') {
-            $null
-        }
- else {
-            $extractedValue
-        }
+        $isNullLiteral = $extractedValue -eq 'null' -or $extractedValue -eq '$null'
+        $value = if ($isNullLiteral) { $null } else { $extractedValue }
 
         # Convert yq-style path to SOPS JSONPath
         # .stringData.password -> ["stringData"]["password"]
@@ -139,67 +135,59 @@
         try {
             Import-Module powershell-yaml -ErrorAction Stop
 
-            # Attempt 1: Parse YAML as-is
-            try {
-                $parsed = $Secret | ConvertFrom-Yaml -ErrorAction Stop
-
+            # Helper to convert parsed YAML to set paths
+            $convertParsedYaml = {
+                param($parsed)
                 if ($parsed -is [hashtable] -or $parsed -is [System.Collections.Specialized.OrderedDictionary]) {
-                    # Successfully parsed as YAML structure - convert to set paths
                     return ConvertTo-SopsSetPath -Object $parsed
                 }
-                elseif ($null -ne $parsed -and $parsed -isnot [string]) {
-                    # Parsed to some other structured type - convert to hashtable first
+                if ($parsed -is [PSCustomObject]) {
                     $ht = @{}
-                    if ($parsed -is [PSCustomObject]) {
-                        $parsed.PSObject.Properties | ForEach-Object {
-                            $ht[$_.Name] = $_.Value
-                        }
-                        return ConvertTo-SopsSetPath -Object $ht
-                    }
+                    $parsed.PSObject.Properties | ForEach-Object { $ht[$_.Name] = $_.Value }
+                    return ConvertTo-SopsSetPath -Object $ht
                 }
+                return $null
+            }
+
+            # Attempt 1: Parse YAML as-is
+            $parsed = $null
+            $parseError = $null
+            try {
+                $parsed = $Secret | ConvertFrom-Yaml -ErrorAction Stop
             }
             catch {
-                # Attempt 2: If YAML parsing failed and string contains tabs, normalize and retry
-                if ($Secret -match "`t") {
-                    Write-Verbose "Normalizing tab characters to spaces in YAML input"
-                    $normalized = $Secret -replace "`t", "  "  # Replace each tab with 2 spaces
+                $parseError = $_
+            }
 
-                    try {
-                        $parsed = $normalized | ConvertFrom-Yaml -ErrorAction Stop
+            # If parsing succeeded, try to convert
+            if ($null -eq $parseError -and $null -ne $parsed -and $parsed -isnot [string]) {
+                $result = & $convertParsedYaml $parsed
+                if ($null -ne $result) { return $result }
+            }
 
-                        if ($parsed -is [hashtable] -or $parsed -is [System.Collections.Specialized.OrderedDictionary]) {
-                            # Successfully parsed after normalization - convert to set paths
-                            return ConvertTo-SopsSetPath -Object $parsed
-                        }
-                        elseif ($null -ne $parsed -and $parsed -isnot [string]) {
-                            # Parsed to some other structured type - convert to hashtable first
-                            $ht = @{}
-                            if ($parsed -is [PSCustomObject]) {
-                                $parsed.PSObject.Properties | ForEach-Object {
-                                    $ht[$_.Name] = $_.Value
-                                }
-                                return ConvertTo-SopsSetPath -Object $ht
-                            }
-                        }
-                    }
-                    catch {
-                        # YAML parsing failed even after tab normalization
-                        throw "Failed to parse YAML input after normalization: $($_.Exception.Message). Check YAML syntax."
+            # Attempt 2: If parsing failed and string contains tabs, normalize and retry
+            if ($null -ne $parseError -and $Secret -match "`t") {
+                Write-Verbose "Normalizing tab characters to spaces in YAML input"
+                $normalized = $Secret -replace "`t", "  "
+
+                try {
+                    $parsed = $normalized | ConvertFrom-Yaml -ErrorAction Stop
+                    if ($null -ne $parsed -and $parsed -isnot [string]) {
+                        $result = & $convertParsedYaml $parsed
+                        if ($null -ne $result) { return $result }
                     }
                 }
-                else {
-                    # YAML parsing failed and no tabs detected - likely a syntax error
-                    throw "Failed to parse YAML input: $($_.Exception.Message). Content appears to be YAML but has syntax errors."
+                catch {
+                    throw "Failed to parse YAML input after normalization: $($_.Exception.Message). Check YAML syntax."
                 }
+            }
+            elseif ($null -ne $parseError) {
+                throw "Failed to parse YAML input: $($parseError.Exception.Message). Content appears to be YAML but has syntax errors."
             }
         }
         catch {
-            # powershell-yaml module not available or other critical error
-            if ($_.Exception.Message -match "Failed to parse YAML") {
-                # Re-throw our custom error messages
-                throw
-            }
-            # Fall through to plain string handling if module not available
+            # Re-throw YAML parsing errors, fall through for module not available
+            if ($_.Exception.Message -match "Failed to parse YAML") { throw }
         }
     }
 

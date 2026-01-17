@@ -51,9 +51,8 @@ function Invoke-SopsSet {
     $sopsArgs = @('--set', $SetExpression, $FilePath)
 
     # Use shared helper for environment scoping and error handling
-    # Note: Invoke-SopsCommand returns a joined string, but this function historically returns array
     $output = Invoke-SopsCommand -SopsArgs $sopsArgs -VaultParameters $VaultParameters -Operation 'set'
 
-    # Split output back to array for backward compatibility
+    # Return as array for backward compatibility (Invoke-SopsCommand returns joined string)
     return ($output -split "`n")
 }

@@ -40,44 +40,32 @@ function Get-Secret {
     )
 
     $params = Get-VaultParameters -AdditionalParameters $AdditionalParameters
-
-    # Validate required Path parameter
     Assert-VaultPath -Parameters $params
 
-    # Resolve secret name to index entry
+    # Resolve secret - return $null for NotFound per SecretManagement convention
     try {
         $resolution = Resolve-SecretEntry -Name $Name -VaultParameters $params
     }
     catch {
-        # Resolve-SecretEntry throws on Collision - re-throw
-        # For NotFound, it also throws, but we want to return $null per SecretManagement convention
         if ($_.Exception.Message -match "Secret.*not found") {
             return $null
         }
         throw
     }
 
-    $secretEntry = $resolution.Entry
-
-    # Decrypt and parse YAML to typed objects
+    # Decrypt the secret file
     try {
-        $decryptedYaml = Invoke-SopsDecrypt -FilePath $secretEntry.FilePath -VaultParameters $params
-
-        # Verify we got content
-        if ([string]::IsNullOrWhiteSpace($decryptedYaml)) {
-            Write-Warning "No content returned from decrypting secret '$Name'"
-            return $null
-        }
-
-        # Return raw YAML string
-        # Users can parse with their preferred YAML parser if needed
-        # Use Write-Output -NoEnumerate for arrays to prevent unwrapping
-        if ($decryptedYaml -is [array]) {
-            return (Write-Output -NoEnumerate $decryptedYaml)
-        }
-        return $decryptedYaml
+        $decryptedYaml = Invoke-SopsDecrypt -FilePath $resolution.Entry.FilePath -VaultParameters $params
     }
     catch {
         throw "Failed to decrypt secret '$Name': $_"
     }
+
+    if ([string]::IsNullOrWhiteSpace($decryptedYaml)) {
+        Write-Warning "No content returned from decrypting secret '$Name'"
+        return $null
+    }
+
+    # Use Write-Output -NoEnumerate to prevent array unwrapping
+    Write-Output -NoEnumerate $decryptedYaml
 }

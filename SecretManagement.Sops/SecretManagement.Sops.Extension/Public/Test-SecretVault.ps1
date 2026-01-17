@@ -26,6 +26,7 @@ function Test-SecretVault {
     Test-SecretVault -VaultName 'MySopsVault' -AdditionalParameters @{ Path = 'C:\secrets' }
     #>
     [CmdletBinding()]
+    [OutputType([bool])]
     param(
         [Parameter(Mandatory)]
         [string]$VaultName,
@@ -34,41 +35,35 @@ function Test-SecretVault {
         [hashtable]$AdditionalParameters
     )
 
+    $params = Get-VaultParameters -AdditionalParameters $AdditionalParameters
+
+    # Validate vault path
     try {
-        $params = Get-VaultParameters -AdditionalParameters $AdditionalParameters
-
-        # Validate vault path
-        try {
-            Assert-VaultPath -Parameters $params
-        }
-        catch {
-            Write-Error $_.Exception.Message
-            return $false
-        }
-
-        # Check that SOPS binary is available
-        if (-not (Test-SopsAvailable)) {
-            Write-Error "SOPS binary not found in PATH. Install from https://github.com/getsops/sops/releases"
-            return $false
-        }
-
-        # Try to build the index (this validates file access)
-        try {
-            $index = Get-SecretIndex -Path $params.Path -FilePattern $params.FilePattern -Recurse $params.Recurse -NamingStrategy $params.NamingStrategy
-
-            if ($index.Count -eq 0) {
-                Write-Warning "No SOPS files found matching pattern '$($params.FilePattern)' in path '$($params.Path)'"
-            }
-        }
-        catch {
-            Write-Error "Failed to index vault: $_"
-            return $false
-        }
-
-        return $true
+        Assert-VaultPath -Parameters $params
     }
     catch {
-        Write-Error "Vault validation failed: $_"
+        Write-Error $_.Exception.Message
         return $false
     }
+
+    # Check that SOPS binary is available
+    if (-not (Test-SopsAvailable)) {
+        Write-Error "SOPS binary not found in PATH. Install from https://github.com/getsops/sops/releases"
+        return $false
+    }
+
+    # Validate file access by building the index
+    try {
+        $index = Get-SecretIndex -Path $params.Path -FilePattern $params.FilePattern -Recurse $params.Recurse -NamingStrategy $params.NamingStrategy
+    }
+    catch {
+        Write-Error "Failed to index vault: $_"
+        return $false
+    }
+
+    if ($index.Count -eq 0) {
+        Write-Warning "No SOPS files found matching pattern '$($params.FilePattern)' in path '$($params.Path)'"
+    }
+
+    return $true
 }

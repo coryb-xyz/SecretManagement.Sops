@@ -1,4 +1,4 @@
-﻿function ConvertTo-SopsSetPath {
+function ConvertTo-SopsSetPath {
     <#
     .SYNOPSIS
     Convert hashtable structure to SOPS --set JSONPath expressions.
@@ -48,85 +48,77 @@
         [string]$ScalarBehavior = 'Wrap'
     )
 
+    function Test-DictionaryType {
+        param([object]$Value)
+        return $Value -is [hashtable] -or $Value -is [System.Collections.Specialized.OrderedDictionary]
+    }
+
+    function New-PathResult {
+        param(
+            [string]$Path,
+            [object]$Value
+        )
+        return @{
+            Path  = $Path
+            Value = $Value
+        }
+    }
+
+    function Get-JsonPath {
+        param(
+            [string]$Prefix,
+            [string]$Key
+        )
+        if ($Prefix) {
+            return "$Prefix[`"$Key`"]"
+        }
+        return "[`"$Key`"]"
+    }
+
+    function Get-ArrayPath {
+        param(
+            [string]$Prefix,
+            [int]$Index
+        )
+        if ($Prefix) {
+            return "$Prefix[$Index]"
+        }
+        return "[$Index]"
+    }
+
     $results = @()
 
-    # Handle different object types
-    if ($Object -is [hashtable] -or $Object -is [System.Collections.Specialized.OrderedDictionary]) {
+    if (Test-DictionaryType -Value $Object) {
         foreach ($key in $Object.Keys) {
             $value = $Object[$key]
-            $currentPath = if ($Prefix) {
-                "$Prefix[`"$key`"]"
-            }
- else {
-                "[`"$key`"]"
-            }
+            $currentPath = Get-JsonPath -Prefix $Prefix -Key $key
 
-            # If value is a nested hashtable/OrderedDictionary, recurse
-            if ($value -is [hashtable] -or $value -is [System.Collections.Specialized.OrderedDictionary]) {
+            if (Test-DictionaryType -Value $value) {
                 $results += ConvertTo-SopsSetPath -Object $value -Prefix $currentPath -ScalarBehavior $ScalarBehavior
-            }
-            # If value is null, handle specially
-            elseif ($null -eq $value) {
-                $results += @{
-                    Path  = $currentPath
-                    Value = $null
-                }
-            }
-            # Leaf value - add to results
-            else {
-                $results += @{
-                    Path  = $currentPath
-                    Value = $value
-                }
+            } else {
+                $results += New-PathResult -Path $currentPath -Value $value
             }
         }
-    }
-    # Handle arrays
-    elseif ($Object -is [array]) {
+    } elseif ($Object -is [array]) {
         for ($i = 0; $i -lt $Object.Count; $i++) {
             $value = $Object[$i]
-            $currentPath = if ($Prefix) {
-                "$Prefix[$i]"
-            }
- else {
-                "[$i]"
-            }
+            $currentPath = Get-ArrayPath -Prefix $Prefix -Index $i
 
-            # If value is a nested structure, recurse
-            if ($value -is [hashtable] -or $value -is [System.Collections.Specialized.OrderedDictionary]) {
+            if (Test-DictionaryType -Value $value) {
                 $results += ConvertTo-SopsSetPath -Object $value -Prefix $currentPath -ScalarBehavior $ScalarBehavior
-            }
-            # Leaf value
-            else {
-                $results += @{
-                    Path  = $currentPath
-                    Value = $value
-                }
+            } else {
+                $results += New-PathResult -Path $currentPath -Value $value
             }
         }
-    }
-    # Scalar value at top level
-    else {
+    } else {
+        # Scalar value
         if ($Prefix) {
-            $results += @{
-                Path  = $Prefix
-                Value = $Object
-            }
-        }
-        else {
-            # Top-level scalar without prefix - behavior depends on parameter
-            if ($ScalarBehavior -eq 'Throw') {
-                # Extension module: strict validation
-                throw "Cannot convert scalar value to SOPS path. Value must be a hashtable or OrderedDictionary."
-            }
-            else {
-                # Main module: wrap in a default structure for graceful handling
-                Write-Verbose "Scalar value provided without structure - wrapping in default 'value' key"
-                $results += @{
-                    Path  = '["value"]'
-                    Value = $Object
-                }
-            }
+            $results += New-PathResult -Path $Prefix -Value $Object
+        } elseif ($ScalarBehavior -eq 'Throw') {
+            throw "Cannot convert scalar value to SOPS path. Value must be a hashtable or OrderedDictionary."
+        } else {
+            Write-Verbose "Scalar value provided without structure - wrapping in default 'value' key"
+            $results += New-PathResult -Path '["value"]' -Value $Object
         }
     }
 

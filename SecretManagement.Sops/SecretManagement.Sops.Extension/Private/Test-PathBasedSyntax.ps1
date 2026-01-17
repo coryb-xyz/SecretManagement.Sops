@@ -58,11 +58,5 @@ function Test-PathBasedSyntax {
         [string]$InputString
     )
 
-    # Regex pattern for path-based syntax
-    # Matches patterns like:
-    # - .stringData.password: newValue
-    # - .metadata.name: mySecret
-    # - .data["api-key"]: secret123
-    # - .config.nested.field: value
     return $InputString -match '^\s*\.[\w\.\[\]"''-]+:\s*(.*)$'
 }

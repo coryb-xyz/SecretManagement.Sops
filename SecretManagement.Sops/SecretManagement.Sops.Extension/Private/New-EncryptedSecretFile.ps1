@@ -79,79 +79,40 @@ function New-EncryptedSecretFile {
 
         Set-Content -Path $insecureFilePath -Value $yamlContent -NoNewline
 
-        # Encrypt in-place so SOPS uses the actual file path for rule matching
+        # Encrypt in-place so SOPS uses the actual file path for rule matching.
         # For path-based encryption to work, SOPS needs:
         # 1. File path relative to the .sops.yaml config file
         # 2. Working directory set to the vault root (where .sops.yaml lives)
         #
-        # This ensures path_regex patterns in .sops.yaml match correctly
+        # This ensures path_regex patterns in .sops.yaml match correctly.
         # Example: path_regex: apps/prod/.*\.yaml$ matches apps/prod/keys.yaml
 
-        $sopsConfigPath = Join-Path $VaultParameters.Path '.sops.yaml'
+        # Move plaintext to final location, then encrypt in-place from vault root
+        Move-Item -Path $insecureFilePath -Destination $FilePath -Force
 
-        if (Test-Path $sopsConfigPath) {
-            # Rename to final location first
-            Move-Item -Path $insecureFilePath -Destination $FilePath -Force
+        # Calculate relative path from vault root for SOPS path matching.
+        # Keep platform-native path separators because SOPS regex patterns must match the platform's format.
+        $relativePath = [System.IO.Path]::GetRelativePath($VaultParameters.Path, $FilePath)
 
-            # Calculate relative path from vault root for SOPS path matching
-            # SOPS matches paths relative to the .sops.yaml location
-            # Keep platform-native path separators (backslashes on Windows, forward slashes on Linux/Mac)
-            # because SOPS regex patterns must match the platform's path format
-            $relativePath = [System.IO.Path]::GetRelativePath($VaultParameters.Path, $FilePath)
+        $previousLocation = Get-Location
+        try {
+            Set-Location -Path $VaultParameters.Path
 
-            # Save current location and change to vault root
-            $previousLocation = Get-Location
             try {
-                Set-Location -Path $VaultParameters.Path
-
-                # Encrypt in-place using relative path from vault root
-                # This allows path_regex patterns to match correctly
-                try {
-                    Invoke-SopsEncrypt -FilePath $relativePath -InPlace -VaultParameters $VaultParameters
-                }
-                catch {
-                    # Encryption failed - clean up the unencrypted file
-                    $absolutePath = Join-Path $VaultParameters.Path $relativePath
-                    if (Test-Path $absolutePath) {
-                        Remove-Item $absolutePath -Force -ErrorAction SilentlyContinue
-                    }
-                    throw
-                }
+                Invoke-SopsEncrypt -FilePath $relativePath -InPlace -VaultParameters $VaultParameters
             }
-            finally {
-                # Restore original location
-                Set-Location -Path $previousLocation
+            catch {
+                # Encryption failed - clean up the unencrypted file
+                $absolutePath = Join-Path $VaultParameters.Path $relativePath
+                if (Test-Path $absolutePath) {
+                    Remove-Item $absolutePath -Force -ErrorAction SilentlyContinue
+                }
+                throw
             }
         }
-        else {
-            # Fallback to default config discovery if no .sops.yaml in vault
-            # Same approach: rename then encrypt in-place from vault root
-            Move-Item -Path $insecureFilePath -Destination $FilePath -Force
-
-            $relativePath = [System.IO.Path]::GetRelativePath($VaultParameters.Path, $FilePath)
-
-            $previousLocation = Get-Location
-            try {
-                Set-Location -Path $VaultParameters.Path
-
-                try {
-                    Invoke-SopsEncrypt -FilePath $relativePath -InPlace -VaultParameters $VaultParameters
-                }
-                catch {
-                    # Encryption failed - clean up the unencrypted file
-                    $absolutePath = Join-Path $VaultParameters.Path $relativePath
-                    if (Test-Path $absolutePath) {
-                        Remove-Item $absolutePath -Force -ErrorAction SilentlyContinue
-                    }
-                    throw
-                }
-            }
-            finally {
-                Set-Location -Path $previousLocation
-            }
+        finally {
+            Set-Location -Path $previousLocation
         }
-
-        # Success - file is now encrypted at final location
     }
     catch {
         throw "Failed to create secret '$SecretName': $_"

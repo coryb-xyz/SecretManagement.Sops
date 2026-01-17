@@ -54,111 +54,74 @@ function Get-SopsEncryptionCandidates {
         [string]$Path
     )
 
-    # Initialize result
-    $candidates = @()
-
-    # Check if .sops.yaml exists
     $config = Get-SopsConfiguration -VaultPath $Path
     if (-not $config.Found) {
         Write-Warning "No .sops.yaml configuration found in '$Path'. Cannot determine encryption rules."
         return @()
     }
 
-    # Extract file patterns from creation_rules
-    $candidateFilePatterns = @()
-    foreach ($rule in $config.CreationRules) {
-        # Extract file extension from path_regex (e.g., '\.yaml$' -> '*.yaml')
-        if ($rule.PathRegex -match '\\\.([a-zA-Z0-9]+)\$\??$') {
-            $extension = $matches[1]
-            $pattern = "*.$extension"
-            if ($candidateFilePatterns -notcontains $pattern) {
-                $candidateFilePatterns += $pattern
-            }
+    # Extract unique file extensions from path_regex patterns (e.g., '\.yaml$' -> '*.yaml')
+    $filePatterns = @($config.CreationRules | ForEach-Object {
+        if ($_.PathRegex -match '\\\.([a-zA-Z0-9]+)\$\??$') {
+            "*.$($matches[1])"
         }
-    }
+    } | Select-Object -Unique)
 
-    # Fallback to *.yaml if no patterns extracted
-    if ($candidateFilePatterns.Count -eq 0) {
+    if ($filePatterns.Count -eq 0) {
         Write-Verbose "No file extensions found in path_regex patterns, defaulting to *.yaml"
-        $candidateFilePatterns = @('*.yaml')
+        $filePatterns = @('*.yaml')
     }
 
-    Write-Verbose "Searching for files matching patterns: $($candidateFilePatterns -join ', ')"
+    Write-Verbose "Searching for files matching patterns: $($filePatterns -join ', ')"
 
     # Find all files matching extracted patterns
-    $allFiles = @()
-    foreach ($pattern in $candidateFilePatterns) {
-        $findParams = @{
-            Path        = $Path
-            Filter      = $pattern
-            File        = $true
-            Recurse     = $true  # Always recurse
-            ErrorAction = 'SilentlyContinue'
-        }
-
-        try {
-            $allFiles += @(Get-ChildItem @findParams)
-        }
-        catch {
-            Write-Warning "Failed to enumerate files matching '$pattern' in '$Path': $_"
-        }
+    $files = @()
+    foreach ($pattern in $filePatterns) {
+        $files += @(Get-ChildItem -Path $Path -Filter $pattern -File -Recurse -ErrorAction SilentlyContinue)
     }
 
-    if ($allFiles.Count -eq 0) {
-        Write-Verbose "No files found matching patterns: $($candidateFilePatterns -join ', ')"
+    if ($files.Count -eq 0) {
+        Write-Verbose "No files found matching patterns: $($filePatterns -join ', ')"
         return @()
     }
 
-    $candidateFiles = $allFiles
+    $candidates = [System.Collections.Generic.List[string]]::new()
 
-    # Process each file
-    foreach ($candidateFile in $candidateFiles) {
-        # Skip .sops.yaml itself
-        if ($candidateFile.Name -eq '.sops.yaml') {
+    foreach ($file in $files) {
+        if ($file.Name -eq '.sops.yaml') {
             continue
         }
 
-        # Check 1: Unencrypted suffix exclusion (cheapest operation)
-        $candidateFileNameWithoutExt = [System.IO.Path]::GetFileNameWithoutExtension($candidateFile.Name)
-        $matchesSuffix = $false
-        foreach ($suffix in $config.UnencryptedSuffixes) {
-            if ($candidateFileNameWithoutExt.EndsWith($suffix)) {
-                $matchesSuffix = $true
-                break
-            }
-        }
-        if ($matchesSuffix) {
+        # Unencrypted suffix exclusion (cheapest operation)
+        $fileNameWithoutExt = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
+        $hasUnencryptedSuffix = $config.UnencryptedSuffixes | Where-Object { $fileNameWithoutExt.EndsWith($_) }
+        if ($hasUnencryptedSuffix) {
             continue
         }
 
-        # Check 2: Find first matching rule by path_regex
-        $matchingRule = $null
-        foreach ($rule in $config.CreationRules) {
-            if (Test-PathMatchesRegex -FilePath $candidateFile.FullName -VaultPath $Path -PathRegex $rule.PathRegex) {
-                $matchingRule = $rule
-                break  # First match wins
-            }
-        }
+        # Find first matching rule by path_regex (first match wins per SOPS spec)
+        $matchingRule = $config.CreationRules | Where-Object {
+            Test-PathMatchesRegex -FilePath $file.FullName -VaultPath $Path -PathRegex $_.PathRegex
+        } | Select-Object -First 1
 
         if (-not $matchingRule) {
             continue
         }
 
-        # Check 3: Already encrypted? (fast - streaming check)
-        if (Test-SopsEncrypted -FilePath $candidateFile.FullName) {
-            continue  # Already encrypted, skip
+        # Already encrypted check (fast streaming check)
+        if (Test-SopsEncrypted -FilePath $file.FullName) {
+            continue
         }
 
-        # Check 4: Content key matching (most expensive - YAML parsing)
+        # Content key matching (most expensive - YAML parsing)
         if ($matchingRule.EncryptedRegex) {
-            if (-not (Test-FileContainsKeys -FilePath $candidateFile.FullName -EncryptedRegex $matchingRule.EncryptedRegex)) {
-                continue  # Doesn't contain matching keys
+            if (-not (Test-FileContainsKeys -FilePath $file.FullName -EncryptedRegex $matchingRule.EncryptedRegex)) {
+                continue
             }
         }
 
-        # Passed all checks - it's a candidate!
-        $candidates += $candidateFile.FullName
+        $candidates.Add($file.FullName)
     }
 
-    return $candidates
+    return [string[]]$candidates
 }

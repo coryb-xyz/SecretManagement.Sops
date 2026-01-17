@@ -36,58 +36,42 @@
         [string]$VaultPath
     )
 
-    # Initialize result
     $result = @{
         UnencryptedSuffixes = @()
         Found               = $false
         CreationRules       = @()
     }
 
-    # Check if .sops.yaml exists
     $sopsConfigPath = Join-Path $VaultPath '.sops.yaml'
     if (-not (Test-Path $sopsConfigPath)) {
         return $result
     }
 
     try {
-        # Import powershell-yaml module (already available in project)
         Import-Module powershell-yaml -ErrorAction Stop
 
-        # Parse .sops.yaml
         $configContent = Get-Content -Path $sopsConfigPath -Raw
         $config = ConvertFrom-Yaml -Yaml $configContent
 
-        # Extract unencrypted_suffix from all creation_rules
         if ($config.creation_rules) {
-            $suffixes = @()
-
-            foreach ($rule in $config.creation_rules) {
-                # Extract full rule data for CreationRules array
-                $ruleData = @{
-                    PathRegex         = $rule.path_regex
-                    EncryptedRegex    = $rule.encrypted_regex
-                    UnencryptedSuffix = $rule.unencrypted_suffix
-                }
-                $result.CreationRules += $ruleData
-
-                # Maintain backward compatibility - collect unencrypted_suffix
-                if ($rule.unencrypted_suffix) {
-                    $suffixes += $rule.unencrypted_suffix
+            $result.CreationRules = $config.creation_rules | ForEach-Object {
+                @{
+                    PathRegex         = $_.path_regex
+                    EncryptedRegex    = $_.encrypted_regex
+                    UnencryptedSuffix = $_.unencrypted_suffix
                 }
             }
 
-            # Return unique suffixes only
-            if ($suffixes.Count -gt 0) {
-                $result.UnencryptedSuffixes = $suffixes | Select-Object -Unique
-            }
+            $result.UnencryptedSuffixes = $config.creation_rules |
+                Where-Object { $_.unencrypted_suffix } |
+                ForEach-Object { $_.unencrypted_suffix } |
+                Select-Object -Unique
 
             $result.Found = $true
         }
     }
     catch {
-        # Graceful degradation - log warning but don't fail
         Write-Warning "Failed to parse .sops.yaml at '$sopsConfigPath': $_"
-        # Return empty result (already initialized)
     }
 
     return $result
