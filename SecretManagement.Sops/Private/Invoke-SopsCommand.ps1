@@ -45,22 +45,14 @@ function Invoke-SopsCommand {
     )
 
     # Determine if we need to scope environment variables for this operation
-    if ($VaultParameters) {
-        $sopsEnv = Get-SopsEnvironment -VaultParameters $VaultParameters
+    $sopsEnv = if ($VaultParameters) { Get-SopsEnvironment -VaultParameters $VaultParameters } else { @{} }
 
-        if ($sopsEnv.Count -gt 0) {
-            # Execute with scoped environment variables
-            $output = Invoke-WithScopedEnv -EnvVars $sopsEnv -ScriptBlock {
-                & sops @SopsArgs 2>&1
-            }
-        }
-        else {
-            # No environment override needed - use existing environment
-            $output = & sops @SopsArgs 2>&1
+    if ($sopsEnv.Count -gt 0) {
+        $output = Invoke-WithScopedEnv -EnvVars $sopsEnv -ScriptBlock {
+            & sops @SopsArgs 2>&1
         }
     }
     else {
-        # Backward compatibility: no VaultParameters provided
         $output = & sops @SopsArgs 2>&1
     }
 

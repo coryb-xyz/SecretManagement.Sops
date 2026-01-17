@@ -40,24 +40,19 @@ function Invoke-WithScopedEnv {
         [scriptblock]$ScriptBlock
     )
 
-    # Save original values
     $originalValues = @{}
     foreach ($key in $EnvVars.Keys) {
         $originalValues[$key] = [Environment]::GetEnvironmentVariable($key, 'Process')
     }
 
     try {
-        # Set new values
         foreach ($key in $EnvVars.Keys) {
-            $value = $EnvVars[$key]
-            [Environment]::SetEnvironmentVariable($key, $value, 'Process')
+            [Environment]::SetEnvironmentVariable($key, $EnvVars[$key], 'Process')
         }
 
-        # Execute the script block
         & $ScriptBlock
     }
     finally {
-        # Restore original values
         foreach ($key in $originalValues.Keys) {
             [Environment]::SetEnvironmentVariable($key, $originalValues[$key], 'Process')
         }

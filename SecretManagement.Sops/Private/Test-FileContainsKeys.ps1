@@ -45,14 +45,11 @@ function Test-FileContainsKeys {
     )
 
     try {
-        # Import powershell-yaml module
         Import-Module powershell-yaml -ErrorAction Stop
 
-        # Read and parse YAML file
         $content = Get-Content -Path $FilePath -Raw -ErrorAction Stop
         $yaml = ConvertFrom-Yaml -Yaml $content
 
-        # Check if any top-level keys match the regex
         foreach ($key in $yaml.Keys) {
             if ($key -match $EncryptedRegex) {
                 return $true

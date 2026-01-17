@@ -37,31 +37,23 @@ function Get-SopsEnvironment {
         [hashtable]$VaultParameters
     )
 
-    $sopsEnv = @{}
+    $ageKeyFile = $VaultParameters['AgeKeyFile']
 
-    # Check if AgeKeyFile parameter is provided
-    if ($VaultParameters.ContainsKey('AgeKeyFile') -and
-        -not [string]::IsNullOrWhiteSpace($VaultParameters.AgeKeyFile)) {
-
-        $ageKeyFile = $VaultParameters.AgeKeyFile
-
-        # Convert relative paths to absolute paths
-        if (-not [System.IO.Path]::IsPathRooted($ageKeyFile)) {
-            $ageKeyFile = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ageKeyFile)
-        }
-
-        # Validate the key file exists
-        if (-not (Test-Path -Path $ageKeyFile -PathType Leaf)) {
-            throw "Age key file does not exist: $ageKeyFile`nSpecified in vault AgeKeyFile parameter."
-        }
-
-        # Set the environment variable for this operation
-        $sopsEnv['SOPS_AGE_KEY_FILE'] = $ageKeyFile
-
-        Write-Verbose "Using vault-specific age key file: $ageKeyFile"
+    # If no AgeKeyFile specified, return empty hashtable to use existing environment
+    if ([string]::IsNullOrWhiteSpace($ageKeyFile)) {
+        return @{}
     }
-    # Note: If AgeKeyFile is not provided, we don't set anything and let SOPS
-    # use the existing $env:SOPS_AGE_KEY_FILE or other encryption methods (Azure KV, etc.)
 
-    return $sopsEnv
+    # Convert relative paths to absolute paths
+    if (-not [System.IO.Path]::IsPathRooted($ageKeyFile)) {
+        $ageKeyFile = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ageKeyFile)
+    }
+
+    if (-not (Test-Path -Path $ageKeyFile -PathType Leaf)) {
+        throw "Age key file does not exist: $ageKeyFile`nSpecified in vault AgeKeyFile parameter."
+    }
+
+    Write-Verbose "Using vault-specific age key file: $ageKeyFile"
+
+    return @{ SOPS_AGE_KEY_FILE = $ageKeyFile }
 }

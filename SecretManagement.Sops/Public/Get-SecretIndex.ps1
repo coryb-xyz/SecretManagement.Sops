@@ -33,6 +33,7 @@
     Get-SecretIndex -Path 'C:\secrets' -RequireEncryption $true
     #>
     [CmdletBinding()]
+    [OutputType([object[]])]
     param(
         [Parameter(Mandatory)]
         [ValidateScript({ Test-Path $_ -PathType Container })]
@@ -51,12 +52,8 @@
         [bool]$RequireEncryption = $false
     )
 
-    $index = @()
-
-    # Normalize path to absolute for consistent path resolution
     $absolutePath = [System.IO.Path]::GetFullPath($Path)
 
-    # Find all matching files
     $getChildItemParams = @{
         Path        = $absolutePath
         Filter      = $FilePattern
@@ -65,46 +62,35 @@
         ErrorAction = 'SilentlyContinue'
     }
 
-    $files = Get-ChildItem @getChildItemParams
+    $files = Get-ChildItem @getChildItemParams | Where-Object { $_.Name -ne '.sops.yaml' }
 
-    # Apply encryption filtering if requested
     if ($RequireEncryption) {
-        # Parse .sops.yaml once for this invocation
         $sopsConfig = Get-SopsConfiguration -VaultPath $absolutePath
+        $unencryptedSuffixes = $sopsConfig.UnencryptedSuffixes
 
-        # Filter by suffix exclusions first (cheaper than content check)
-        if ($sopsConfig.UnencryptedSuffixes.Count -gt 0) {
-            $files = $files | Where-Object {
-                $fileName = [System.IO.Path]::GetFileNameWithoutExtension($_.Name)
-                $excluded = $false
-                foreach ($suffix in $sopsConfig.UnencryptedSuffixes) {
-                    if ($fileName.EndsWith($suffix)) {
-                        $excluded = $true
-                        break
-                    }
+        $files = $files | Where-Object {
+            $fileName = [System.IO.Path]::GetFileNameWithoutExtension($_.Name)
+
+            $hasSuffixMatch = $false
+            foreach ($suffix in $unencryptedSuffixes) {
+                if ($fileName.EndsWith($suffix)) {
+                    $hasSuffixMatch = $true
+                    break
                 }
-                -not $excluded
+            }
+
+            (-not $hasSuffixMatch) -and (Test-SopsEncrypted -FilePath $_.FullName)
+        }
+    }
+
+    $index = @(
+        foreach ($file in $files) {
+            $entry = Get-SecretIndexEntry -FilePath $file.FullName -BasePath $absolutePath -NamingStrategy $NamingStrategy
+            if ($null -ne $entry) {
+                $entry
             }
         }
-
-        # Filter by SOPS metadata presence (streaming state machine)
-        $files = $files | Where-Object {
-            Test-SopsEncrypted -FilePath $_.FullName
-        }
-    }
-
-    foreach ($file in $files) {
-        # Skip .sops.yaml configuration files
-        if ($file.Name -eq '.sops.yaml') {
-            continue
-        }
-
-        $entry = Get-SecretIndexEntry -FilePath $file.FullName -BasePath $absolutePath -NamingStrategy $NamingStrategy
-
-        if ($null -ne $entry) {
-            $index += $entry
-        }
-    }
+    )
 
     return $index
 }

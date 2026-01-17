@@ -58,85 +58,69 @@ function ConvertTo-SecretYaml {
         [string]$Name
     )
 
-    # Handle different secret types
+    # String: check for path syntax first, then try YAML parsing
     if ($Secret -is [string]) {
-        # Extension-specific logic: check for path syntax and YAML parsing
-        # IMPORTANT: Check for path-based syntax FIRST before trying YAML parsing
-        # Path syntax like ".stringData.password: value" is technically valid YAML,
-        # but we need to preserve it as a string for ConvertTo-SopsSetPathFromString
-        # to handle correctly. Otherwise it gets parsed as @{ ".stringData.password" = "value" }
-        # which creates a literal key instead of updating the nested path.
+        # Path syntax (e.g., ".stringData.password: value") must be preserved as string
+        # for ConvertTo-SopsSetPathFromString - check before YAML parsing since it's valid YAML
         if (Test-PathBasedSyntax -InputString $Secret) {
-            # Path-based syntax detected - return as-is (string)
-            # This will be handled by ConvertTo-SopsSetPathFromString in Set-Secret
             return $Secret
         }
 
-        # Try to parse as YAML - if it's structured YAML (like from New-KubernetesSecret),
-        # parse and return the structure rather than the raw string
+        # Try to parse as structured YAML (e.g., from New-KubernetesSecret)
         try {
             Import-Module powershell-yaml -ErrorAction Stop
             $parsed = $Secret | ConvertFrom-Yaml -ErrorAction Stop
 
-            # Check if we got a structured object (hashtable/ordered dictionary)
             if ($parsed -is [hashtable] -or $parsed -is [System.Collections.Specialized.OrderedDictionary]) {
-                # Successfully parsed as YAML structure - return it
                 return $parsed
             }
-            elseif ($null -ne $parsed -and $parsed -is [PSCustomObject]) {
-                # Convert PSCustomObject to hashtable
+
+            if ($null -ne $parsed -and $parsed -is [PSCustomObject]) {
                 $ht = @{}
-                $parsed.PSObject.Properties | ForEach-Object {
-                    $ht[$_.Name] = $_.Value
+                foreach ($prop in $parsed.PSObject.Properties) {
+                    $ht[$prop.Name] = $prop.Value
                 }
                 return $ht
             }
         }
         catch {
-            # Not valid YAML or YAML module not available - fall through to plain string handling
             Write-Verbose "YAML parsing failed for secret '$Name': $_"
         }
 
-        # Plain string - return as-is
         return $Secret
     }
-    elseif ($Secret -is [System.Security.SecureString]) {
-        # Convert SecureString to plain text
-        try {
-            return ($Secret | ConvertFrom-SecureString -AsPlainText)
-        }
-        catch {
-            throw "Failed to convert SecureString for secret '$Name': $_"
-        }
+
+    # SecureString: convert to plain text
+    if ($Secret -is [System.Security.SecureString]) {
+        return $Secret | ConvertFrom-SecureString -AsPlainText
     }
-    elseif ($Secret -is [hashtable] -or $Secret -is [System.Collections.Specialized.OrderedDictionary]) {
-        # Use hashtable as-is
-        # This allows K8s secrets with apiVersion/kind/metadata to pass through directly
-        return $Secret
-    }
-    elseif ($Secret -is [PSCredential]) {
-        # Convert PSCredential to username/password hashtable
-        $plainPassword = $Secret.Password | ConvertFrom-SecureString -AsPlainText
+
+    # PSCredential: convert to username/password hashtable
+    if ($Secret -is [PSCredential]) {
         return @{
             username = $Secret.UserName
-            password = $plainPassword
+            password = $Secret.Password | ConvertFrom-SecureString -AsPlainText
         }
     }
-    elseif ($Secret -is [byte[]]) {
-        # Convert byte array to base64 string (Extension uses simple string format)
-        $base64 = [Convert]::ToBase64String($Secret)
-        return $base64
+
+    # Hashtable/OrderedDictionary: pass through (supports K8s secrets with apiVersion/kind/metadata)
+    if ($Secret -is [hashtable] -or $Secret -is [System.Collections.Specialized.OrderedDictionary]) {
+        return $Secret
     }
-    elseif ($Secret -is [System.Collections.IDictionary]) {
-        # Handle other dictionary types (convert to hashtable)
+
+    # Byte array: convert to base64 string
+    if ($Secret -is [byte[]]) {
+        return [Convert]::ToBase64String($Secret)
+    }
+
+    # Other dictionary types: convert to hashtable
+    if ($Secret -is [System.Collections.IDictionary]) {
         $ht = @{}
         foreach ($key in $Secret.Keys) {
             $ht[$key] = $Secret[$key]
         }
         return $ht
     }
-    else {
-        # Unsupported type - Extension module throws for clarity
-        throw "Unsupported secret type: $($Secret.GetType().FullName). Supported types: String, SecureString, PSCredential, Byte[], Hashtable"
-    }
+
+    throw "Unsupported secret type: $($Secret.GetType().FullName). Supported types: String, SecureString, PSCredential, Byte[], Hashtable"
 }

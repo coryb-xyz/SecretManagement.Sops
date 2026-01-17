@@ -51,75 +51,67 @@ function Update-EncryptedSecret {
         [string]$SecretName
     )
 
+    # Convert content to SOPS set paths based on type
+    $setPaths = if ($Content -is [string]) {
+        ConvertTo-SopsSetPathFromString -Secret $Content
+    }
+    else {
+        ConvertTo-SopsSetPath -Object $Content
+    }
+
     try {
-        # For string values, intelligently detect the update mode:
-        # 1. Path-based syntax (.path.to.field: value)
-        # 2. YAML content (multi-line YAML to patch)
-        # 3. Plain string (store in 'value' key)
-        if ($Content -is [string]) {
-            # Use converter that handles all three string modes
-            $setPaths = ConvertTo-SopsSetPathFromString -Secret $Content
-
-            foreach ($item in $setPaths) {
-                if ($null -eq $item.Value) {
-                    # Use SOPS unset to completely remove the key
-                    Invoke-SopsUnset -Path $item.Path -FilePath $FilePath -VaultParameters $VaultParameters | Out-Null
-                }
-                else {
-                    # Escape quotes in value for set operation
-                    $valueStr = if ($item.Value -eq '') {
-                        # Empty string should be quoted
-                        '""'
-                    }
-                    elseif ($item.Value -is [bool]) {
-                        $item.Value.ToString().ToLower()
-                    }
-                    elseif ($item.Value -is [int] -or $item.Value -is [long] -or $item.Value -is [double]) {
-                        $item.Value.ToString()
-                    }
-                    else {
-                        # String value - wrap in quotes and escape
-                        $escaped = $item.Value -replace '"', '\"'
-                        "`"$escaped`""
-                    }
-
-                    $setExpression = "$($item.Path) $valueStr"
-                    Invoke-SopsSet -SetExpression $setExpression -FilePath $FilePath -VaultParameters $VaultParameters | Out-Null
-                }
+        foreach ($item in $setPaths) {
+            if ($null -eq $item.Value) {
+                Invoke-SopsUnset -Path $item.Path -FilePath $FilePath -VaultParameters $VaultParameters | Out-Null
+                continue
             }
+
+            $valueStr = ConvertTo-SopsValueString -Value $item.Value
+            $setExpression = "$($item.Path) $valueStr"
+            Invoke-SopsSet -SetExpression $setExpression -FilePath $FilePath -VaultParameters $VaultParameters | Out-Null
         }
-        else {
-            # For hashtables, convert to set paths and update each key
-            $setPaths = ConvertTo-SopsSetPath -Object $Content
-
-            foreach ($item in $setPaths) {
-                if ($null -eq $item.Value) {
-                    # Use SOPS unset to completely remove the key
-                    Invoke-SopsUnset -Path $item.Path -FilePath $FilePath -VaultParameters $VaultParameters | Out-Null
-                }
-                else {
-                    # Escape quotes in value for set operation
-                    $valueStr = if ($item.Value -is [bool]) {
-                        $item.Value.ToString().ToLower()
-                    }
-                    elseif ($item.Value -is [int] -or $item.Value -is [long] -or $item.Value -is [double]) {
-                        $item.Value.ToString()
-                    }
-                    else {
-                        # String value - wrap in quotes and escape
-                        $escaped = $item.Value -replace '"', '\"'
-                        "`"$escaped`""
-                    }
-
-                    $setExpression = "$($item.Path) $valueStr"
-                    Invoke-SopsSet -SetExpression $setExpression -FilePath $FilePath -VaultParameters $VaultParameters | Out-Null
-                }
-            }
-        }
-
-        # Success - no return value needed
     }
     catch {
         throw "Failed to update existing secret '$SecretName': $_"
     }
+}
+
+function ConvertTo-SopsValueString {
+    <#
+    .SYNOPSIS
+    Converts a value to a SOPS-compatible string representation.
+
+    .DESCRIPTION
+    Formats values for use in SOPS --set expressions. Handles empty strings,
+    booleans, numbers, and regular strings with proper quoting and escaping.
+
+    .PARAMETER Value
+    The value to convert.
+
+    .OUTPUTS
+    String representation suitable for SOPS --set.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        $Value
+    )
+
+    if ($Value -eq '') {
+        return '""'
+    }
+
+    if ($Value -is [bool]) {
+        return $Value.ToString().ToLower()
+    }
+
+    if ($Value -is [int] -or $Value -is [long] -or $Value -is [double]) {
+        return $Value.ToString()
+    }
+
+    # String value - wrap in quotes and escape internal quotes
+    $escaped = $Value -replace '"', '\"'
+    return "`"$escaped`""
 }

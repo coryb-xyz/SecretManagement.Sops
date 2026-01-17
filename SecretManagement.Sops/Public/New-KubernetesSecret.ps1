@@ -139,12 +139,10 @@
         [switch]$AsJson
     )
 
-    # Check kubectl availability (REQUIRED - no fallback)
     if (-not (Get-Command 'kubectl' -ErrorAction SilentlyContinue)) {
         throw "kubectl is required for New-KubernetesSecret. Install kubectl from https://kubernetes.io/docs/tasks/tools/"
     }
 
-    # Build kubectl command arguments
     $kubectlArgs = @('create', 'secret')
 
     switch ($PSCmdlet.ParameterSetName) {
@@ -178,65 +176,49 @@
             if ($DockerServer) {
                 $kubectlArgs += "--docker-server=$DockerServer"
             }
-            if ($DockerCredential) {
-                $kubectlArgs += "--docker-username=$($DockerCredential.UserName)"
-                # Convert SecureString password to plain text for kubectl
-                $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($DockerCredential.Password)
-                try {
-                    $plainPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
-                    $kubectlArgs += "--docker-password=$plainPassword"
-                }
-                finally {
-                    [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
-                }
-            }
+
+            $kubectlArgs += "--docker-username=$($DockerCredential.UserName)"
+            $kubectlArgs += "--docker-password=$($DockerCredential.GetNetworkCredential().Password)"
+
             if ($DockerEmail) {
                 $kubectlArgs += "--docker-email=$DockerEmail"
             }
         }
 
         'tls' {
-            $kubectlArgs += 'tls', $Name
-            $kubectlArgs += "--cert=$CertPath", "--key=$KeyPath"
+            $kubectlArgs += 'tls', $Name, "--cert=$CertPath", "--key=$KeyPath"
         }
     }
 
-    # Add common flags
     $kubectlArgs += '--dry-run=client', '-o', 'yaml', "--namespace=$Namespace"
 
-    # Execute kubectl
     $output = & kubectl @kubectlArgs 2>&1
 
     if ($LASTEXITCODE -ne 0) {
-        $errorMsg = $output -join "`n"
-        throw "kubectl failed to create secret: $errorMsg"
+        throw "kubectl failed to create secret: $($output -join "`n")"
     }
 
-    # Parse the YAML output
     Import-Module powershell-yaml -ErrorAction Stop
     $secret = ($output -join "`n") | ConvertFrom-Yaml
 
-    # Convert base64-encoded 'data' to plain-text 'stringData'
     if ($secret.data) {
         $stringData = [ordered]@{}
         foreach ($key in $secret.data.Keys) {
-            $base64Value = $secret.data[$key]
-            $decodedBytes = [System.Convert]::FromBase64String($base64Value)
-            $stringData[$key] = [System.Text.Encoding]::UTF8.GetString($decodedBytes)
+            $stringData[$key] = [System.Text.Encoding]::UTF8.GetString(
+                [System.Convert]::FromBase64String($secret.data[$key])
+            )
         }
         $secret.Remove('data')
         $secret['stringData'] = $stringData
-    }
-
-    # Return in requested format (default is YAML string)
-    if ($AsJson) {
-        return ($secret | ConvertTo-Json -Depth 10)
     }
 
     if ($AsHashtable) {
         return $secret
     }
 
-    # Default: return YAML string
+    if ($AsJson) {
+        return ($secret | ConvertTo-Json -Depth 10)
+    }
+
     return ($secret | ConvertTo-Yaml)
 }

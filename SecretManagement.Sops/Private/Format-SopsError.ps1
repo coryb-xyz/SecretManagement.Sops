@@ -1,3 +1,24 @@
+function Get-AgeKeyHint {
+    <#
+    .SYNOPSIS
+    Returns a hint about the current age key configuration.
+    #>
+    [OutputType([string])]
+    param(
+        [hashtable]$VaultParameters
+    )
+
+    if ($VaultParameters -and $VaultParameters.AgeKeyFile) {
+        return "Current vault AgeKeyFile: $($VaultParameters.AgeKeyFile)"
+    }
+
+    if ($env:SOPS_AGE_KEY_FILE) {
+        return "Current SOPS_AGE_KEY_FILE: $env:SOPS_AGE_KEY_FILE"
+    }
+
+    return 'No age key file configured (neither vault parameter nor environment variable)'
+}
+
 function Format-SopsError {
     <#
     .SYNOPSIS
@@ -41,7 +62,7 @@ function Format-SopsError {
         [hashtable]$VaultParameters
     )
 
-    # Check for Azure CLI missing
+    # Azure CLI missing
     if ($ErrorMessage -match 'az: command not found|az.cmd.*not recognized') {
         return @"
 SOPS failed to $Operation`: Azure CLI ('az') not found in PATH.
@@ -54,19 +75,9 @@ See: https://github.com/getsops/sops#encrypting-using-azure-key-vault
 "@
     }
 
-    # Check for data key access failure
+    # Data key access failure
     if ($ErrorMessage -match 'failed to get the data key') {
-        # Provide context about which key configuration was used
-        $ageKeyHint = if ($VaultParameters -and $VaultParameters.AgeKeyFile) {
-            "Current vault AgeKeyFile: $($VaultParameters.AgeKeyFile)"
-        }
-        elseif ($env:SOPS_AGE_KEY_FILE) {
-            "Current SOPS_AGE_KEY_FILE: $env:SOPS_AGE_KEY_FILE"
-        }
-        else {
-            "No age key file configured (neither vault parameter nor environment variable)"
-        }
-
+        $ageKeyHint = Get-AgeKeyHint -VaultParameters $VaultParameters
         return @"
 SOPS failed to $Operation`: Unable to access encryption keys.
 
@@ -82,7 +93,7 @@ Error details: $ErrorMessage
 "@
     }
 
-    # Check for age key file configuration missing
+    # Age key file not configured
     if ($ErrorMessage -match 'SOPS_AGE_KEY_FILE|age key') {
         return @"
 SOPS failed to $Operation`: age key file not configured.
@@ -96,7 +107,7 @@ Error details: $ErrorMessage
 "@
     }
 
-    # Check for missing creation rules (encryption-specific)
+    # Missing creation rules (encryption only)
     if ($Operation -eq 'encrypt' -and $ErrorMessage -match 'no matching creation rules|creation_rules') {
         return @"
 SOPS failed to encrypt: No creation rules found.
@@ -116,6 +127,6 @@ Error details: $ErrorMessage
 "@
     }
 
-    # Generic SOPS error with operation context
+    # Generic fallback
     return "SOPS $Operation failed: $ErrorMessage"
 }

@@ -46,13 +46,9 @@ function ConvertTo-SopsSetPath {
         [string]$Prefix = ''
     )
 
-    # Get the main module's implementation path
     $parentModulePath = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
     $mainFunctionPath = Join-Path $parentModulePath 'Private\ConvertTo-SopsSetPath.ps1'
-
-    # Dot-source the main implementation
     . $mainFunctionPath
 
-    # Call with Extension-specific behavior (strict scalar validation)
-    return ConvertTo-SopsSetPath -Object $Object -Prefix $Prefix -ScalarBehavior 'Throw'
+    ConvertTo-SopsSetPath -Object $Object -Prefix $Prefix -ScalarBehavior 'Throw'
 }

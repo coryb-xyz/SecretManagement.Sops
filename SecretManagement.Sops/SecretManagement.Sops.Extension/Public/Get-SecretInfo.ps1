@@ -46,32 +46,28 @@
     # Validate required Path parameter
     Assert-VaultPath -Parameters $params
 
-    # Build the secret index
     $index = Get-SecretIndex -Path $params.Path -FilePattern $params.FilePattern -Recurse $params.Recurse -NamingStrategy $params.NamingStrategy -RequireEncryption $params.RequireEncryption
 
-    $secretInfoList = @()
+    $secretInfoList = [System.Collections.Generic.List[Microsoft.PowerShell.SecretManagement.SecretInformation]]::new()
 
     foreach ($entry in $index) {
-        # Add the main secret entry
+        if ($Filter -and ($entry.Name -notlike $Filter)) {
+            continue
+        }
+
         $metadata = @{
             FilePath  = $entry.FilePath
             Namespace = $entry.Namespace
             ShortName = $entry.ShortName
         }
 
-        # Apply filter if provided
-        if ($Filter -and ($entry.Name -notlike $Filter)) {
-            continue
-        }
-
-        # Create SecretInformation object for the secret
         $secretInfo = [Microsoft.PowerShell.SecretManagement.SecretInformation]::new(
             $entry.Name,
             [Microsoft.PowerShell.SecretManagement.SecretType]::Hashtable,
             $VaultName,
             $metadata
         )
-        $secretInfoList += $secretInfo
+        $secretInfoList.Add($secretInfo)
     }
 
     return $secretInfoList

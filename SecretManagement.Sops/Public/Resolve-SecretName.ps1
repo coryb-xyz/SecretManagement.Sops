@@ -4,10 +4,9 @@ function Resolve-SecretName {
     Resolves a secret name from a file path based on the naming strategy.
 
     .DESCRIPTION
-    Converts a file path to a secret name using one of three strategies:
+    Converts a file path to a secret name using one of two strategies:
     - RelativePath: Uses the relative path from the base directory (default)
     - FileName: Uses only the filename without extension
-    - KubernetesMetadata: Uses metadata.name from K8s Secret manifests
 
     .PARAMETER FilePath
     The full path to the SOPS file.
@@ -16,7 +15,7 @@ function Resolve-SecretName {
     The base vault directory path.
 
     .PARAMETER NamingStrategy
-    The naming strategy to use (RelativePath or FileName).
+    The naming strategy to use. Defaults to 'RelativePath'.
 
     .OUTPUTS
     String - The resolved secret name.
@@ -45,17 +44,12 @@ function Resolve-SecretName {
         }
 
         'RelativePath' {
-            # Normalize paths to absolute to handle relative path inputs
             $absoluteFilePath = [System.IO.Path]::GetFullPath($FilePath)
             $absoluteBasePath = [System.IO.Path]::GetFullPath($BasePath)
-
-            # Get relative path from base directory
             $relativePath = [System.IO.Path]::GetRelativePath($absoluteBasePath, $absoluteFilePath)
 
-            # Remove file extension
+            # Remove extension and normalize path separators
             $relativePath = $relativePath -replace '\.(yaml|yml|json)$', ''
-
-            # Convert backslashes to forward slashes for consistency
             $relativePath = $relativePath -replace '\\', '/'
 
             return $relativePath

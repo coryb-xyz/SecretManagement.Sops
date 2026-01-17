@@ -67,51 +67,29 @@ function Set-Secret {
         [hashtable]$Metadata
     )
 
-    # 1. Validate SOPS availability
     if (-not (Test-SopsAvailable)) {
         throw "SOPS binary not found. Install from https://github.com/getsops/sops/releases"
     }
 
-    # 2. Get and validate vault parameters
-    try {
-        $params = Get-VaultParameters -AdditionalParameters $AdditionalParameters
-        Assert-VaultPath -Parameters $params
-    }
-    catch {
-        throw "Vault configuration error: $_"
-    }
+    $params = Get-VaultParameters -AdditionalParameters $AdditionalParameters
+    Assert-VaultPath -Parameters $params
 
-    # 3. Determine target file path
     # Convert secret name to file path (e.g., "apps/foo/secret" -> "{VaultPath}/apps/foo/secret.yaml")
     $fileName = $Name -replace '/', [System.IO.Path]::DirectorySeparatorChar
     $filePath = Join-Path $params.Path "$fileName.yaml"
 
-    # 4. Ensure directory exists
+    # Ensure parent directory exists
     $directory = [System.IO.Path]::GetDirectoryName($filePath)
     if (-not (Test-Path $directory)) {
-        try {
-            New-Item -Path $directory -ItemType Directory -Force | Out-Null
-        }
-        catch {
-            throw "Failed to create directory '$directory': $_"
-        }
+        New-Item -Path $directory -ItemType Directory -Force | Out-Null
     }
 
-    # 5. Convert secret to YAML structure
-    try {
-        $newContent = ConvertTo-SecretYaml -Secret $Secret -Name $Name
-    }
-    catch {
-        throw "Failed to convert secret '$Name': $_"
-    }
+    $newContent = ConvertTo-SecretYaml -Secret $Secret -Name $Name
 
-    # 6. Update existing secret or create new file
     if (Test-Path $filePath) {
-        # PATCH-FIRST APPROACH: Update existing encrypted file using SOPS --set
         Update-EncryptedSecret -FilePath $filePath -Content $newContent -VaultParameters $params -SecretName $Name
     }
     else {
-        # NEW FILE: Create and encrypt at final location for path-based encryption rules
         New-EncryptedSecretFile -FilePath $filePath -Content $newContent -VaultParameters $params -SecretName $Name
     }
 }

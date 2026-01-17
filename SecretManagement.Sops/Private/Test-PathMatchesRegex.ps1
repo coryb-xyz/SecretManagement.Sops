@@ -54,22 +54,16 @@ function Test-PathMatchesRegex {
         [string]$PathRegex
     )
 
-    try {
-        # Get absolute paths for accurate comparison
-        $absoluteFilePath = [System.IO.Path]::GetFullPath($FilePath)
-        $absoluteVaultPath = [System.IO.Path]::GetFullPath($VaultPath)
+    # Get absolute paths for accurate comparison
+    $absoluteFilePath = [System.IO.Path]::GetFullPath($FilePath)
+    $absoluteVaultPath = [System.IO.Path]::GetFullPath($VaultPath)
 
-        # Get relative path from vault root (SOPS matches against relative paths)
-        $relativePath = [System.IO.Path]::GetRelativePath($absoluteVaultPath, $absoluteFilePath)
+    # Get relative path from vault root (SOPS matches against relative paths)
+    $relativePath = [System.IO.Path]::GetRelativePath($absoluteVaultPath, $absoluteFilePath)
 
-        # Normalize to forward slashes for regex matching (SOPS convention)
-        $normalizedPath = $relativePath -replace '\\', '/'
+    # Normalize to forward slashes for regex matching (SOPS convention)
+    $normalizedPath = $relativePath -replace '\\', '/'
 
-        # Test against regex
-        return $normalizedPath -match $PathRegex
-    }
-    catch {
-        Write-Warning "Failed to match path '$FilePath' against regex '$PathRegex': $_"
-        return $false
-    }
+    # Test against regex
+    $normalizedPath -match $PathRegex
 }
