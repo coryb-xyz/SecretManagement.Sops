@@ -36,7 +36,6 @@ SecretManagement.Sops enables PowerShell developers to work with SOPS-encrypted 
 - [Troubleshooting](#troubleshooting)
 - [FAQ](#faq)
 - [Current Limitations](#current-limitations)
-- [Roadmap](#roadmap)
 - [Examples](#examples)
 - [Contributing](#contributing)
 - [License](#license)
@@ -84,7 +83,7 @@ Download the latest release from: https://github.com/coryb-xyz/SecretManagement.
 ```powershell
 # Download the latest release ZIP file, then extract to your modules directory
 $modulePath = "$HOME\Documents\PowerShell\Modules"
-Expand-Archive -Path .\SecretManagement.Sops-v0.4.3.zip -DestinationPath $modulePath
+Expand-Archive -Path .\SecretManagement.Sops-v0.4.4.zip -DestinationPath $modulePath
 
 # Verify installation
 Get-Module -ListAvailable SecretManagement.Sops
@@ -94,7 +93,7 @@ Get-Module -ListAvailable SecretManagement.Sops
 ```powershell
 # Extract to WindowsPowerShell modules directory
 $modulePath = "$HOME\Documents\WindowsPowerShell\Modules"
-Expand-Archive -Path .\SecretManagement.Sops-v0.4.3.zip -DestinationPath $modulePath
+Expand-Archive -Path .\SecretManagement.Sops-v0.4.4.zip -DestinationPath $modulePath
 
 # Verify installation
 Get-Module -ListAvailable SecretManagement.Sops
@@ -136,7 +135,7 @@ Copy-Item -Recurse -Force .\Build\SecretManagement.Sops $modulePath\
 
 ### PowerShell Gallery
 
-**Coming Soon** - Publication to PowerShell Gallery is planned for a future release.
+**Planned** - Publication to PowerShell Gallery is under consideration for a future release.
 
 ### Upgrading
 
@@ -645,6 +644,23 @@ Absolutely! Here's an example for GitHub Actions:
     "
 ```
 
+### Do I need to refresh the vault after pulling new secrets from git?
+
+No. SecretManagement.Sops is stateless by design—every call to `Get-SecretInfo` or `Get-Secret` performs a fresh filesystem scan. When team members add new secrets to the repository:
+
+```powershell
+# Before git pull
+Get-SecretInfo -Vault 'GitOpsSecrets' | Measure-Object  # 10 secrets
+
+# Pull changes with new secrets
+git pull
+
+# Immediately see new secrets - no refresh needed
+Get-SecretInfo -Vault 'GitOpsSecrets' | Measure-Object  # 12 secrets
+```
+
+This design prioritizes correctness for GitOps workflows. There's no need to unregister/re-register the vault or call any refresh command.
+
 ## Troubleshooting
 
 ### SOPS Not Found
@@ -715,28 +731,11 @@ Add-Content $PROFILE "`n`$env:SOPS_AGE_KEY_FILE = 'C:\Users\YourName\.sops\key.t
 
 ## Current Limitations
 
-- **YAML Only**: JSON and dotenv format support planned for future releases
-- **No Caching**: Every operation invokes the SOPS binary (may impact performance for large vaults)
-- **No Unlock-SecretVault**: Credential pre-caching not yet implemented
+- **YAML Only**: Currently supports YAML files only
+- **Stateless Design**: Every operation rescans the filesystem (ensures GitOps correctness; may impact performance for very large vaults)
+- **No Unlock-SecretVault**: Credential pre-caching not implemented
 - **String Return Type**: Get-Secret returns raw YAML strings; users must parse with their preferred YAML parser
 - **File-Level Deletion**: Remove-Secret deletes entire files; use Set-Secret with path syntax to remove individual keys
-
-## Roadmap
-
-### Completed Features (v0.3.0)
-- ✅ Full read/write support (Get-Secret, Set-Secret, Remove-Secret)
-- ✅ Generic YAML secret support (no Kubernetes-specific parsing)
-- ✅ Namespace support with collision detection
-- ✅ Multiple naming strategies (RelativePath, FileName)
-- ✅ Multiple encryption backends (Azure KV, age, AWS KMS, GCP KMS, PGP)
-- ✅ Encryption filtering with RequireEncryption parameter
-
-### Planned Features
-- **Enhanced Format Support**: JSON and dotenv file formats
-- **Performance Optimization**: In-memory caching with TTL for frequently accessed secrets
-- **Credential Management**: `Unlock-SecretVault` for credential pre-caching and batch operations
-- **Advanced Features**: File watcher for automatic index refresh, binary file support
-- **PowerShell Gallery**: Official publication and versioning
 
 ## Examples
 
@@ -848,4 +847,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Version**: 0.4.2 | [Releases](https://github.com/coryb-xyz/SecretManagement.Sops/releases) | [Issues](https://github.com/coryb-xyz/SecretManagement.Sops/issues)
+**Version**: 0.4.4 | [Releases](https://github.com/coryb-xyz/SecretManagement.Sops/releases) | [Issues](https://github.com/coryb-xyz/SecretManagement.Sops/issues)
