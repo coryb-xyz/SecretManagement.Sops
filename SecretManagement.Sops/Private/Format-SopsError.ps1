@@ -55,7 +55,7 @@ function Format-SopsError {
         [string]$ErrorMessage,
 
         [Parameter(Mandatory)]
-        [ValidateSet('decrypt', 'encrypt', 'set')]
+        [ValidateSet('decrypt', 'encrypt', 'set', 'unset')]
         [string]$Operation,
 
         [Parameter()]

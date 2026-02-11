@@ -19,7 +19,9 @@
     The name of the secret.
 
     .PARAMETER Namespace
-    The Kubernetes namespace. Defaults to 'default'.
+    The Kubernetes namespace. If not specified, the namespace field is omitted from
+    the generated YAML (useful for GitOps/Flux scenarios where namespace is injected
+    externally).
 
     .PARAMETER FromLiteral
     Hashtable of key-value pairs for generic secrets.
@@ -89,7 +91,7 @@
         [string]$Name,
 
         [Parameter()]
-        [string]$Namespace = 'default',
+        [string]$Namespace,
 
         # Generic secret parameters
         [Parameter(ParameterSetName = 'generic')]
@@ -190,7 +192,10 @@
         }
     }
 
-    $kubectlArgs += '--dry-run=client', '-o', 'yaml', "--namespace=$Namespace"
+    $kubectlArgs += '--dry-run=client', '-o', 'yaml'
+    if ($Namespace) {
+        $kubectlArgs += "--namespace=$Namespace"
+    }
 
     $output = & kubectl @kubectlArgs 2>&1
 
@@ -200,6 +205,14 @@
 
     Import-Module powershell-yaml -ErrorAction Stop
     $secret = ($output -join "`n") | ConvertFrom-Yaml
+
+    # Remove namespace from metadata when the caller did not specify one.
+    # Kubectl may inject namespace: default from the active context.
+    if (-not $Namespace -and
+        $secret.metadata -is [System.Collections.IDictionary] -and
+        $secret.metadata.ContainsKey('namespace')) {
+        $secret.metadata.Remove('namespace')
+    }
 
     if ($secret.data) {
         $stringData = [ordered]@{}

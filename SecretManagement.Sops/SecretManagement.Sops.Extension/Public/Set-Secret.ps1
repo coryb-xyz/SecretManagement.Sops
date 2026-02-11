@@ -25,7 +25,8 @@ function Set-Secret {
     Additional vault parameters (Path, FilePattern, etc.).
 
     .PARAMETER Metadata
-    Optional metadata (not currently used).
+    Optional metadata. Supports DocumentName key to target a specific document
+    in multi-document YAML files by metadata.name.
 
     .OUTPUTS
     None. Throws errors on failure.
@@ -87,7 +88,7 @@ function Set-Secret {
     $newContent = ConvertTo-SecretYaml -Secret $Secret -Name $Name
 
     if (Test-Path $filePath) {
-        Update-EncryptedSecret -FilePath $filePath -Content $newContent -VaultParameters $params -SecretName $Name
+        Update-EncryptedSecret -FilePath $filePath -Content $newContent -VaultParameters $params -SecretName $Name -Metadata $Metadata
     }
     else {
         New-EncryptedSecretFile -FilePath $filePath -Content $newContent -VaultParameters $params -SecretName $Name
