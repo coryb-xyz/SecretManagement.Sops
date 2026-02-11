@@ -17,6 +17,7 @@ SecretManagement.Sops enables PowerShell developers to work with SOPS-encrypted 
 - **Namespace Support**: Folder-based namespacing with collision detection for duplicate secret names
 - **Multiple Encryption Backends**: Supports Azure Key Vault, age, AWS KMS, GCP KMS, and PGP
 - **Flexible Filtering**: Filter secrets by pattern and encryption status for controlled secret access
+- **Multi-Document YAML**: Multiple Kubernetes Secret manifests in a single SOPS-encrypted file, with auto-detection, explicit targeting, and automatic append-or-merge behavior
 
 
 ## Table of Contents
@@ -33,6 +34,7 @@ SecretManagement.Sops enables PowerShell developers to work with SOPS-encrypted 
 - [Namespace Support and Collision Detection](#namespace-support-and-collision-detection)
 - [Filtering and Encryption Control](#filtering-and-encryption-control)
 - [Write Operations](#write-operations)
+- [Multi-Document YAML](#multi-document-yaml)
 - [Troubleshooting](#troubleshooting)
 - [FAQ](#faq)
 - [Current Limitations](#current-limitations)
@@ -83,7 +85,7 @@ Download the latest release from: https://github.com/coryb-xyz/SecretManagement.
 ```powershell
 # Download the latest release ZIP file, then extract to your modules directory
 $modulePath = "$HOME\Documents\PowerShell\Modules"
-Expand-Archive -Path .\SecretManagement.Sops-v0.4.5.zip -DestinationPath $modulePath
+Expand-Archive -Path .\SecretManagement.Sops-v0.5.0.zip -DestinationPath $modulePath
 
 # Verify installation
 Get-Module -ListAvailable SecretManagement.Sops
@@ -93,7 +95,7 @@ Get-Module -ListAvailable SecretManagement.Sops
 ```powershell
 # Extract to WindowsPowerShell modules directory
 $modulePath = "$HOME\Documents\WindowsPowerShell\Modules"
-Expand-Archive -Path .\SecretManagement.Sops-v0.4.5.zip -DestinationPath $modulePath
+Expand-Archive -Path .\SecretManagement.Sops-v0.5.0.zip -DestinationPath $modulePath
 
 # Verify installation
 Get-Module -ListAvailable SecretManagement.Sops
@@ -532,6 +534,94 @@ Remove-Secret -Name 'apps/foo/config' -Vault 'GitOpsSecrets'
   Set-Secret -Name 'config' -Vault 'GitOpsSecrets' -Secret '.stringData.old-key: null'
   ```
 
+## Multi-Document YAML
+
+SecretManagement.Sops supports YAML files containing multiple Kubernetes Secret manifests separated by `---`. This allows you to bundle related secrets (e.g. all secrets for a single application) into one SOPS-encrypted file.
+
+### File Layout
+
+A multi-document YAML file looks like this:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-credentials
+stringData:
+  username: prod_user
+  password: OldDbPass123
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: api-keys
+stringData:
+  primary-key: old-api-key-1
+```
+
+### Creating a Multi-Document Bundle
+
+Use `New-KubernetesSecret` piped to `Set-Secret` to build up a bundle incrementally:
+
+```powershell
+# First secret creates the file
+New-KubernetesSecret -Name 'db-credentials' -FromLiteral @{
+    username = 'prod_user'
+    password = 'SecurePass123'
+} | Set-Secret -Name 'app/secrets' -Vault 'GitOpsVault'
+
+# Second secret is appended as a new document
+New-KubernetesSecret -Name 'api-keys' -FromLiteral @{
+    'primary-key' = 'key-abc-123'
+} | Set-Secret -Name 'app/secrets' -Vault 'GitOpsVault'
+```
+
+### Auto-Detection and Append-or-Merge
+
+When you pipe a complete Kubernetes Secret manifest (one with `apiVersion`, `kind`, and `metadata.name`) to `Set-Secret`, the module automatically:
+
+- **Appends** a new document if no document with that `metadata.name` exists in the file
+- **Merges** into the matching document if the name is already present (existing keys are preserved)
+
+```powershell
+# 'cache-config' doesn't exist yet → appended as a third document
+New-KubernetesSecret -Name 'cache-config' -FromLiteral @{
+    'redis-url' = 'redis://cache:6379'
+} | Set-Secret -Name 'app/secrets' -Vault 'GitOpsVault'
+
+# 'db-credentials' already exists → merged (password updated, username kept)
+New-KubernetesSecret -Name 'db-credentials' -FromLiteral @{
+    password = 'NewPass456'
+} | Set-Secret -Name 'app/secrets' -Vault 'GitOpsVault'
+```
+
+### Explicit Document Targeting
+
+To update a specific field in a named document without using `New-KubernetesSecret`, pass the document name via `-Metadata`:
+
+```powershell
+# Update a single field in the 'api-keys' document
+Set-Secret -Name 'app/secrets' -Vault 'GitOpsVault' `
+    -Secret '.stringData.primary-key: new-key-xyz' `
+    -Metadata @{ DocumentName = 'api-keys' }
+```
+
+If the specified `DocumentName` does not exist in the file, an error is thrown (use the auto-detect pipe approach above for append behavior).
+
+### Namespace Omission
+
+`New-KubernetesSecret` omits the `namespace` field from generated manifests when `-Namespace` is not specified. This is the recommended approach for GitOps/Flux workflows where the namespace is injected by the tooling at deploy time:
+
+```powershell
+# No namespace field in the generated YAML (Flux/GitOps friendly)
+New-KubernetesSecret -Name 'my-secret' -FromLiteral @{ key = 'value' } |
+    Set-Secret -Name 'app/secrets' -Vault 'GitOpsVault'
+
+# Namespace included only when explicitly requested
+New-KubernetesSecret -Name 'my-secret' -Namespace 'production' -FromLiteral @{ key = 'value' } |
+    Set-Secret -Name 'app/secrets' -Vault 'GitOpsVault'
+```
+
 ## FAQ
 
 ### Which encryption backend should I use?
@@ -582,21 +672,24 @@ $parsed = ConvertFrom-Yaml $yamlContent
 
 ### Can I use this with Kubernetes?
 
-Yes! SecretManagement.Sops has built-in support for Kubernetes Secret manifests:
+Yes! SecretManagement.Sops has built-in support for Kubernetes Secret manifests via `New-KubernetesSecret`:
 
 ```powershell
-# Create a Kubernetes Secret
-$secret = New-KubernetesSecret -Name 'my-secret' -Namespace 'default' -Data @{
+# Create and encrypt a Kubernetes Secret in one step
+# Omit -Namespace for GitOps/Flux workflows (namespace injected externally)
+New-KubernetesSecret -Name 'my-secret' -FromLiteral @{
     username = 'admin'
     password = 'secretPassword123'
-}
+} | Set-Secret -Name 'k8s/my-secret' -Vault 'GitOpsVault'
 
-# Save and encrypt with SOPS
-$secret | Out-File -Encoding utf8 k8s-secret.yaml
-sops -e -i k8s-secret.yaml
+# Include -Namespace when the manifest should carry it explicitly
+New-KubernetesSecret -Name 'my-secret' -Namespace 'production' -FromLiteral @{
+    username = 'admin'
+    password = 'secretPassword123'
+} | Set-Secret -Name 'k8s/my-secret' -Vault 'GitOpsVault'
 
-# Later, retrieve specific keys
-$password = Get-Secret -Name 'my-secret/password' -Vault 'K8sSecrets' -AsPlainText
+# Later, retrieve the raw manifest
+$manifest = Get-Secret -Name 'k8s/my-secret' -Vault 'GitOpsVault' -AsPlainText
 ```
 
 ### How do I handle secret rotation?
@@ -847,4 +940,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Version**: 0.4.5 | [Releases](https://github.com/coryb-xyz/SecretManagement.Sops/releases) | [Issues](https://github.com/coryb-xyz/SecretManagement.Sops/issues)
+**Version**: 0.5.0 | [Releases](https://github.com/coryb-xyz/SecretManagement.Sops/releases) | [Issues](https://github.com/coryb-xyz/SecretManagement.Sops/issues)
