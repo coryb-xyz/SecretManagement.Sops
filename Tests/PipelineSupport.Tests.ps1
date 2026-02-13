@@ -1,70 +1,42 @@
 #Requires -Modules @{ ModuleName='Pester'; ModuleVersion='5.0.0' }
 
-<#
-.SYNOPSIS
-    Pipeline Support Tests for SecretManagement.Sops
-
-.DESCRIPTION
-    Test suite validating pipeline functionality for Set-Secret:
-    - Pipeline input collection
-    - Field deduplication (last value wins)
-    - SOPS invocation optimization
-    - Mixed input types
-    - Error handling
-
-.NOTES
-    Run with: Invoke-Pester -Path .\Tests\PipelineSupport.Tests.ps1 -Tag 'Pipeline'
-#>
-
 BeforeAll {
-    # Import test helpers
     $testHelpersPath = Join-Path $PSScriptRoot 'TestHelpers.psm1'
     Import-Module $testHelpersPath -Force
 
-    # Auto-bootstrap test data
     if (-not (Initialize-TestDataIfMissing)) {
         throw "Cannot run tests: Test data initialization failed"
     }
 
-    # Clean up orphaned test vaults
     Remove-OrphanedTestVaults
 
-    # Save environment state (location, environment variables, registered vaults)
     $script:testState = Initialize-TestEnvironment
 
-    # Import main module
     $modulePath = Join-Path $PSScriptRoot '..\SecretManagement.Sops\SecretManagement.Sops.psd1'
     Import-Module $modulePath -Force
 
-    # Import SecretManagement module
     if (-not (Get-Module Microsoft.PowerShell.SecretManagement -ListAvailable)) {
         throw "Microsoft.PowerShell.SecretManagement module required"
     }
     Import-Module Microsoft.PowerShell.SecretManagement -Force
 
-    # Configure test environment
     $testDataPath = Join-Path $PSScriptRoot 'TestData'
     $testKeyFile = Join-Path $testDataPath 'test-key.txt'
-    if (Test-Path $testKeyFile) {
-        $env:SOPS_AGE_KEY_FILE = $testKeyFile
-    }
-    else {
+    if (-not (Test-Path $testKeyFile)) {
         throw "Test key file not found: $testKeyFile"
     }
+    $env:SOPS_AGE_KEY_FILE = $testKeyFile
 }
 
 AfterAll {
-    # Restore environment state (location, environment variables, cleanup test vaults)
     Restore-TestEnvironment -State $script:testState
 }
 
 Describe 'Set-Secret Pipeline Support' -Tag 'Pipeline', 'Integration' {
     BeforeAll {
-        # Create test vault
         $script:TestSecretsPath = Join-Path $TestDrive 'pipeline-secrets'
-        New-Item -Path $script:TestSecretsPath -ItemType Directory -Force | Out-Null
+        $null = New-Item -Path $script:TestSecretsPath -ItemType Directory -Force
 
-        # Create .sops.yaml
         $testDataPath = Join-Path $PSScriptRoot 'TestData'
         $testKeyFile = Join-Path $testDataPath 'test-key.txt'
 
@@ -72,7 +44,6 @@ Describe 'Set-Secret Pipeline Support' -Tag 'Pipeline', 'Integration' {
             $ageKeyContent = Get-Content $testKeyFile -Raw
             if ($ageKeyContent -match 'public key: (.+)') {
                 $agePublicKey = $Matches[1].Trim()
-
                 $sopsConfig = @"
 creation_rules:
   - path_regex: \.yaml$
@@ -82,7 +53,6 @@ creation_rules:
             }
         }
 
-        # Register test vault
         $script:TestVaultName = New-IsolatedTestVault -BaseName 'SopsPipelineTest' -ModulePath $modulePath -VaultParameters @{
             Path        = $script:TestSecretsPath
             FilePattern = '*.yaml'
@@ -91,7 +61,6 @@ creation_rules:
     }
 
     AfterAll {
-        # Unregister test vault
         if ($script:TestVaultName) {
             Remove-IsolatedTestVault -VaultName $script:TestVaultName
         }
@@ -103,14 +72,13 @@ creation_rules:
             $initial = @{ field1 = 'old1'; field2 = 'old2'; field3 = 'old3' }
             Set-Secret -Name $secretName -Secret $initial -Vault $script:TestVaultName
 
-            # Pipeline update
             ".field1: new1", ".field2: new2" | Set-Secret -Name $secretName -Vault $script:TestVaultName
 
             $result = Get-Secret -Name $secretName -Vault $script:TestVaultName -AsPlainText
             $parsed = $result | ConvertFrom-Yaml
             $parsed.field1 | Should -Be 'new1'
             $parsed.field2 | Should -Be 'new2'
-            $parsed.field3 | Should -Be 'old3'  # Preserved
+            $parsed.field3 | Should -Be 'old3'
         }
 
         It 'Works with single piped value' {
@@ -151,7 +119,6 @@ creation_rules:
             $initial = @{ field = 'initial' }
             Set-Secret -Name $secretName -Secret $initial -Vault $script:TestVaultName
 
-            # Update same field three times - last should win
             ".field: first", ".field: second", ".field: final" |
                 Set-Secret -Name $secretName -Vault $script:TestVaultName
 
@@ -170,9 +137,9 @@ creation_rules:
 
             $result = Get-Secret -Name $secretName -Vault $script:TestVaultName -AsPlainText
             $parsed = $result | ConvertFrom-Yaml
-            $parsed.a | Should -Be 'A3'  # Last a value
-            $parsed.b | Should -Be 'B1'  # Only b value
-            $parsed.c | Should -Be 'C1'  # Only c value
+            $parsed.a | Should -Be 'A3'
+            $parsed.b | Should -Be 'B1'
+            $parsed.c | Should -Be 'C1'
         }
     }
 
@@ -199,7 +166,6 @@ creation_rules:
             $initial = @{ a = '1'; b = '2'; c = '3' }
             Set-Secret -Name $secretName -Secret $initial -Vault $script:TestVaultName
 
-            # Mix string path and hashtable
             ".a: updated", @{ b = 'hashtable' } |
                 Set-Secret -Name $secretName -Vault $script:TestVaultName
 
@@ -207,7 +173,7 @@ creation_rules:
             $parsed = $result | ConvertFrom-Yaml
             $parsed.a | Should -Be 'updated'
             $parsed.b | Should -Be 'hashtable'
-            $parsed.c | Should -Be '3'  # Preserved
+            $parsed.c | Should -Be '3'
         }
     }
 

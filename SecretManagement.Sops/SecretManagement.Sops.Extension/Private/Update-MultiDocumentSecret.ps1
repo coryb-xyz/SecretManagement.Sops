@@ -14,7 +14,7 @@ function Set-HashtableValueAtPath {
     A SOPS JSONPath expression (e.g., '["stringData"]["password"]').
 
     .PARAMETER Value
-    The value to set. If $null, the key is removed (unset).
+    The value to set. If $null, the key is removed.
     #>
     [CmdletBinding()]
     param(
@@ -46,7 +46,6 @@ function Set-HashtableValueAtPath {
 
     $leafKey = $segments[-1]
     if ($null -eq $Value) {
-        # Unset: remove the key
         if ($current.ContainsKey($leafKey)) {
             $current.Remove($leafKey)
         }
@@ -54,6 +53,34 @@ function Set-HashtableValueAtPath {
     else {
         $current[$leafKey] = $Value
     }
+}
+
+function Test-DocumentNameMatch {
+    <#
+    .SYNOPSIS
+    Checks whether any parsed YAML document has the given metadata.name.
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory)]
+        [object[]]$ParsedDocuments,
+
+        [Parameter(Mandatory)]
+        [string]$Name
+    )
+
+    # Use Contains() not ContainsKey() to support both Hashtable and OrderedDictionary.
+    foreach ($doc in $ParsedDocuments) {
+        if ($doc -is [System.Collections.IDictionary] -and
+            $doc.Contains('metadata') -and
+            $doc['metadata'] -is [System.Collections.IDictionary] -and
+            $doc['metadata'].Contains('name') -and
+            $doc['metadata']['name'] -eq $Name) {
+            return $true
+        }
+    }
+    return $false
 }
 
 function Update-MultiDocumentSecret {
@@ -120,52 +147,32 @@ function Update-MultiDocumentSecret {
         $doc | ConvertFrom-Yaml
     })
 
-    # Find target document and apply changes in memory.
-    # When AppendIfNotFound is set and DocumentName is not found, reconstruct the
-    # document from SetPaths and append it instead of throwing.
-    $docAppended = $false
-    if ($AppendIfNotFound -and -not [string]::IsNullOrEmpty($DocumentName)) {
-        $docExists = $false
-        # Use Contains() not ContainsKey(): parsedDocs from ConvertFrom-Yaml are
-        # Hashtables, but guard against OrderedDictionary inputs too.
-        foreach ($doc in $parsedDocs) {
-            if ($doc -is [System.Collections.IDictionary] -and
-                $doc.Contains('metadata') -and
-                $doc['metadata'] -is [System.Collections.IDictionary] -and
-                $doc['metadata'].Contains('name') -and
-                $doc['metadata']['name'] -eq $DocumentName) {
-                $docExists = $true
-                break
-            }
-        }
+    # Determine whether to append a new document or modify an existing one.
+    $shouldAppend = $AppendIfNotFound -and
+        -not [string]::IsNullOrEmpty($DocumentName) -and
+        -not (Test-DocumentNameMatch -ParsedDocuments $parsedDocs -Name $DocumentName)
 
-        if (-not $docExists) {
-            # Use a regular Hashtable (not [ordered]@{}) so that Set-HashtableValueAtPath
-            # can call ContainsKey() on it (Hashtable supports ContainsKey; OrderedDictionary does not).
-            $newDoc = @{}
-            foreach ($item in $SetPaths) {
-                Set-HashtableValueAtPath -Hashtable $newDoc -SopsPath $item.Path -Value $item.Value
-            }
-            $plaintextDocs = @($plaintextDocs) + @(($newDoc | ConvertTo-Yaml).TrimEnd("`r", "`n"))
-            $docAppended = $true
+    if ($shouldAppend) {
+        $newDoc = @{}
+        foreach ($item in $SetPaths) {
+            Set-HashtableValueAtPath -Hashtable $newDoc -SopsPath $item.Path -Value $item.Value
         }
+        $newDocYaml = ($newDoc | ConvertTo-Yaml).TrimEnd("`r", "`n")
+        $plaintextDocs = @($plaintextDocs) + @($newDocYaml)
     }
-
-    if (-not $docAppended) {
+    else {
         $targetIndex = Find-TargetDocumentIndex -ParsedDocuments $parsedDocs -SetPaths $SetPaths -DocumentName $DocumentName
 
         foreach ($item in $SetPaths) {
             Set-HashtableValueAtPath -Hashtable $parsedDocs[$targetIndex] -SopsPath $item.Path -Value $item.Value
         }
 
-        # Convert modified document back to YAML and update its slot
-        $modifiedYaml = $parsedDocs[$targetIndex] | ConvertTo-Yaml
-        $plaintextDocs[$targetIndex] = $modifiedYaml.TrimEnd("`r", "`n")
+        $modifiedYaml = ($parsedDocs[$targetIndex] | ConvertTo-Yaml).TrimEnd("`r", "`n")
+        $plaintextDocs[$targetIndex] = $modifiedYaml
     }
 
+    # Reassemble and re-encrypt from vault root so SOPS path_regex rules match
     $reassembled = $plaintextDocs -join "`n---`n"
-
-    # Write plaintext and re-encrypt from vault root so SOPS path_regex rules match
     Set-Content -Path $FilePath -Value $reassembled -NoNewline
     $relativePath = [System.IO.Path]::GetRelativePath($VaultParameters.Path, $FilePath)
 

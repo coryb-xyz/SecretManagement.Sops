@@ -75,10 +75,11 @@ function Get-SopsEncryptionCandidates {
     Write-Verbose "Searching for files matching patterns: $($filePatterns -join ', ')"
 
     # Find all files matching extracted patterns
-    $files = @()
-    foreach ($pattern in $filePatterns) {
-        $files += @(Get-ChildItem -Path $Path -Filter $pattern -File -Recurse -ErrorAction SilentlyContinue)
-    }
+    $files = @(
+        foreach ($pattern in $filePatterns) {
+            Get-ChildItem -Path $Path -Filter $pattern -File -Recurse -ErrorAction SilentlyContinue
+        }
+    )
 
     if ($files.Count -eq 0) {
         Write-Verbose "No files found matching patterns: $($filePatterns -join ', ')"
@@ -94,15 +95,25 @@ function Get-SopsEncryptionCandidates {
 
         # Unencrypted suffix exclusion (cheapest operation)
         $fileNameWithoutExt = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
-        $hasUnencryptedSuffix = $config.UnencryptedSuffixes | Where-Object { $fileNameWithoutExt.EndsWith($_) }
+        $hasUnencryptedSuffix = $false
+        foreach ($suffix in $config.UnencryptedSuffixes) {
+            if ($fileNameWithoutExt.EndsWith($suffix)) {
+                $hasUnencryptedSuffix = $true
+                break
+            }
+        }
         if ($hasUnencryptedSuffix) {
             continue
         }
 
         # Find first matching rule by path_regex (first match wins per SOPS spec)
-        $matchingRule = $config.CreationRules | Where-Object {
-            Test-PathMatchesRegex -FilePath $file.FullName -VaultPath $Path -PathRegex $_.PathRegex
-        } | Select-Object -First 1
+        $matchingRule = $null
+        foreach ($rule in $config.CreationRules) {
+            if (Test-PathMatchesRegex -FilePath $file.FullName -VaultPath $Path -PathRegex $rule.PathRegex) {
+                $matchingRule = $rule
+                break
+            }
+        }
 
         if (-not $matchingRule) {
             continue

@@ -75,15 +75,12 @@ function Set-Secret {
     $params = Get-VaultParameters -AdditionalParameters $AdditionalParameters
     Assert-VaultPath -Parameters $params
 
-    # Convert secret name to file path (e.g., "apps/foo/secret" -> "{VaultPath}/apps/foo/secret.yaml")
     $fileName = $Name -replace '/', [System.IO.Path]::DirectorySeparatorChar
     $filePath = Join-Path $params.Path "$fileName.yaml"
 
-    # Ensure parent directory exists
-    $directory = [System.IO.Path]::GetDirectoryName($filePath)
-    if (-not (Test-Path $directory)) {
-        New-Item -Path $directory -ItemType Directory -Force | Out-Null
-    }
+    # Ensure parent directory exists (-Force is a safe no-op when it already exists)
+    $parentDirectory = [System.IO.Path]::GetDirectoryName($filePath)
+    New-Item -Path $parentDirectory -ItemType Directory -Force | Out-Null
 
     $newContent = ConvertTo-SecretYaml -Secret $Secret -Name $Name
 

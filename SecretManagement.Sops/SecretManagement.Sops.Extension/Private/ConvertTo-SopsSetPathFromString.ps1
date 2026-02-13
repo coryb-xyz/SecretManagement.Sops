@@ -47,148 +47,13 @@
         [string]$Secret
     )
 
-    # Try to detect path-based syntax: .path.to.field: value
-    # Matches patterns like:
-    # - .stringData.password: newValue
-    # - .metadata.name: mySecret
-    # - .data["api-key"]: secret123
-    # Use shared helper to ensure consistent detection logic
     if (Test-PathBasedSyntax -InputString $Secret) {
-        # Extract the path and value
-        $parts = $Secret -split ':\s*', 2
-        $pathExpression = $parts[0].Trim()
-        $extractedValue = if ($parts.Count -eq 2) { $parts[1].Trim() } else { '' }
-
-        # Convert string literals "null" and "$null" to PowerShell $null
-        # This enables key removal: ".stringData.host: null" removes the key
-        $isNullLiteral = $extractedValue -eq 'null' -or $extractedValue -eq '$null'
-        $value = if ($isNullLiteral) { $null } else { $extractedValue }
-
-        # Convert yq-style path to SOPS JSONPath
-        # .stringData.password -> ["stringData"]["password"]
-        # .data["api-key"] -> ["data"]["api-key"]
-
-        # Remove leading dot
-        $pathExpression = $pathExpression.TrimStart('.')
-
-        # Split by dots, but preserve bracketed sections
-        $sopsPath = ''
-        $segments = @()
-        $current = ''
-        $inBracket = $false
-
-        for ($i = 0; $i -lt $pathExpression.Length; $i++) {
-            $char = $pathExpression[$i]
-
-            if ($char -eq '[') {
-                if ($current) {
-                    $segments += $current
-                    $current = ''
-                }
-                $inBracket = $true
-                $current += $char
-            }
-            elseif ($char -eq ']') {
-                $current += $char
-                $segments += $current
-                $current = ''
-                $inBracket = $false
-            }
-            elseif ($char -eq '.' -and -not $inBracket) {
-                if ($current) {
-                    $segments += $current
-                    $current = ''
-                }
-            }
-            else {
-                $current += $char
-            }
-        }
-
-        if ($current) {
-            $segments += $current
-        }
-
-        # Build SOPS JSONPath from segments
-        foreach ($segment in $segments) {
-            if ($segment -match '^\[(.+)\]$') {
-                # Already bracketed, use as-is
-                $sopsPath += $segment
-            }
-            else {
-                # Plain key, wrap in brackets and quotes
-                $sopsPath += "[`"$segment`"]"
-            }
-        }
-
-        return @(
-            @{
-                Path  = $sopsPath
-                Value = $value
-            }
-        )
+        return ConvertFrom-PathSyntax -InputString $Secret
     }
 
-    # Try to parse as YAML if the string looks like YAML
-    # Use heuristic detection to avoid false positives on passwords/URLs
     if (Test-YamlLikeString -InputString $Secret) {
-        try {
-            Import-Module powershell-yaml -ErrorAction Stop
-
-            # Helper to convert parsed YAML to set paths
-            $convertParsedYaml = {
-                param($parsed)
-                if ($parsed -is [hashtable] -or $parsed -is [System.Collections.Specialized.OrderedDictionary]) {
-                    return ConvertTo-SopsSetPath -Object $parsed
-                }
-                if ($parsed -is [PSCustomObject]) {
-                    $ht = @{}
-                    $parsed.PSObject.Properties | ForEach-Object { $ht[$_.Name] = $_.Value }
-                    return ConvertTo-SopsSetPath -Object $ht
-                }
-                return $null
-            }
-
-            # Attempt 1: Parse YAML as-is
-            $parsed = $null
-            $parseError = $null
-            try {
-                $parsed = $Secret | ConvertFrom-Yaml -ErrorAction Stop
-            }
-            catch {
-                $parseError = $_
-            }
-
-            # If parsing succeeded, try to convert
-            if ($null -eq $parseError -and $null -ne $parsed -and $parsed -isnot [string]) {
-                $result = & $convertParsedYaml $parsed
-                if ($null -ne $result) { return $result }
-            }
-
-            # Attempt 2: If parsing failed and string contains tabs, normalize and retry
-            if ($null -ne $parseError -and $Secret -match "`t") {
-                Write-Verbose "Normalizing tab characters to spaces in YAML input"
-                $normalized = $Secret -replace "`t", "  "
-
-                try {
-                    $parsed = $normalized | ConvertFrom-Yaml -ErrorAction Stop
-                    if ($null -ne $parsed -and $parsed -isnot [string]) {
-                        $result = & $convertParsedYaml $parsed
-                        if ($null -ne $result) { return $result }
-                    }
-                }
-                catch {
-                    throw "Failed to parse YAML input after normalization: $($_.Exception.Message). Check YAML syntax."
-                }
-            }
-            elseif ($null -ne $parseError) {
-                throw "Failed to parse YAML input: $($parseError.Exception.Message). Content appears to be YAML but has syntax errors."
-            }
-        }
-        catch {
-            # Re-throw YAML parsing errors, fall through for module not available
-            if ($_.Exception.Message -match "Failed to parse YAML") { throw }
-        }
+        $result = ConvertFrom-YamlString -InputString $Secret
+        if ($null -ne $result) { return $result }
     }
 
     # Plain string - store in "value" key
@@ -198,4 +63,135 @@
             Value = $Secret
         }
     )
+}
+
+function ConvertFrom-PathSyntax {
+    <#
+    .SYNOPSIS
+    Parses yq-style path syntax into a SOPS --set path expression.
+
+    .DESCRIPTION
+    Converts ".stringData.password: newValue" into a hashtable with
+    Path = '["stringData"]["password"]' and Value = 'newValue'.
+
+    Null literals ("null", "$null") are converted to $null to enable key removal.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$InputString
+    )
+
+    $parts = $InputString -split ':\s*', 2
+    $pathExpression = $parts[0].Trim().TrimStart('.')
+    $extractedValue = if ($parts.Count -eq 2) { $parts[1].Trim() } else { '' }
+
+    # "null" / "$null" become $null to enable key removal via sops --unset
+    $isNullLiteral = $extractedValue -eq 'null' -or $extractedValue -eq '$null'
+    $value = if ($isNullLiteral) { $null } else { $extractedValue }
+
+    # Split path into segments, preserving bracketed sections like ["api-key"]
+    $segments = [regex]::Matches($pathExpression, '\[[^\]]+\]|[^.\[]+')
+
+    $sopsPath = ''
+    foreach ($segment in $segments) {
+        if ($segment.Value -match '^\[') {
+            $sopsPath += $segment.Value
+        }
+        else {
+            $sopsPath += "[`"$($segment.Value)`"]"
+        }
+    }
+
+    return @(
+        @{
+            Path  = $sopsPath
+            Value = $value
+        }
+    )
+}
+
+function ConvertFrom-YamlString {
+    <#
+    .SYNOPSIS
+    Parses a YAML string into SOPS --set path expressions.
+
+    .DESCRIPTION
+    Attempts to parse the input as YAML content. If parsing fails due to tab
+    characters, normalizes tabs to spaces and retries. Returns $null if the
+    powershell-yaml module is unavailable (allowing fallback to plain string).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$InputString
+    )
+
+    try {
+        Import-Module powershell-yaml -ErrorAction Stop
+    }
+    catch {
+        return $null
+    }
+
+    $parsed = $null
+    $parseError = $null
+    try {
+        $parsed = $InputString | ConvertFrom-Yaml -ErrorAction Stop
+    }
+    catch {
+        $parseError = $_
+    }
+
+    if ($null -eq $parseError -and $null -ne $parsed -and $parsed -isnot [string]) {
+        $result = ConvertFrom-ParsedYaml -Parsed $parsed
+        if ($null -ne $result) { return $result }
+    }
+
+    # If parsing failed and input contains tabs, normalize tabs to spaces and retry
+    if ($null -ne $parseError -and $InputString -match "`t") {
+        Write-Verbose "Normalizing tab characters to spaces in YAML input"
+        $normalized = $InputString -replace "`t", "  "
+
+        try {
+            $parsed = $normalized | ConvertFrom-Yaml -ErrorAction Stop
+            if ($null -ne $parsed -and $parsed -isnot [string]) {
+                $result = ConvertFrom-ParsedYaml -Parsed $parsed
+                if ($null -ne $result) { return $result }
+            }
+        }
+        catch {
+            throw "Failed to parse YAML input after normalization: $($_.Exception.Message). Check YAML syntax."
+        }
+    }
+    elseif ($null -ne $parseError) {
+        throw "Failed to parse YAML input: $($parseError.Exception.Message). Content appears to be YAML but has syntax errors."
+    }
+
+    return $null
+}
+
+function ConvertFrom-ParsedYaml {
+    <#
+    .SYNOPSIS
+    Converts a parsed YAML object (hashtable, OrderedDictionary, or PSCustomObject)
+    to SOPS --set path expressions.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [object]$Parsed
+    )
+
+    if ($Parsed -is [hashtable] -or $Parsed -is [System.Collections.Specialized.OrderedDictionary]) {
+        return ConvertTo-SopsSetPath -Object $Parsed
+    }
+
+    if ($Parsed -is [PSCustomObject]) {
+        $ht = @{}
+        $Parsed.PSObject.Properties | ForEach-Object { $ht[$_.Name] = $_.Value }
+        return ConvertTo-SopsSetPath -Object $ht
+    }
+
+    return $null
 }

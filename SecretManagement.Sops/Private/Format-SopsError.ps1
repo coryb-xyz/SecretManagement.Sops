@@ -3,6 +3,7 @@ function Get-AgeKeyHint {
     .SYNOPSIS
     Returns a hint about the current age key configuration.
     #>
+    [CmdletBinding()]
     [OutputType([string])]
     param(
         [hashtable]$VaultParameters
@@ -58,7 +59,6 @@ function Format-SopsError {
         [ValidateSet('decrypt', 'encrypt', 'set', 'unset')]
         [string]$Operation,
 
-        [Parameter()]
         [hashtable]$VaultParameters
     )
 

@@ -1,26 +1,10 @@
 #Requires -Modules @{ ModuleName='Pester'; ModuleVersion='5.0.0' }
 
-<#
-.SYNOPSIS
-    Tests for New-KubernetesSecret.
-
-.DESCRIPTION
-    Validates Kubernetes Secret YAML generation, including:
-    - Namespace omission when not specified
-    - Namespace inclusion when specified
-    - Output format options (YAML, JSON, Hashtable)
-
-.NOTES
-    Requires kubectl. Tests are skipped when kubectl is not installed.
-    Run with: Invoke-Pester -Path .\Tests\NewKubernetesSecret.Tests.ps1 -Tag 'NewKubernetesSecret'
-#>
+$script:KubectlAvailable = $null -ne (Get-Command 'kubectl' -ErrorAction SilentlyContinue)
 
 BeforeAll {
-    # Import the main module (New-KubernetesSecret is a Public function)
     $modulePath = Join-Path $PSScriptRoot '..\SecretManagement.Sops\SecretManagement.Sops.psd1'
     Import-Module $modulePath -Force
-
-    $script:KubectlAvailable = $null -ne (Get-Command 'kubectl' -ErrorAction SilentlyContinue)
 }
 
 Describe 'New-KubernetesSecret' -Tag 'NewKubernetesSecret' {
@@ -28,19 +12,16 @@ Describe 'New-KubernetesSecret' -Tag 'NewKubernetesSecret' {
     Context 'Namespace handling' -Tag 'Namespace' {
         It 'Omits namespace field from metadata when -Namespace is not specified' -Skip:(-not $script:KubectlAvailable) {
             $result = New-KubernetesSecret -Name 'test-secret' -FromLiteral @{ key = 'value' } -AsHashtable
-
             $result.metadata.ContainsKey('namespace') | Should -Be $false
         }
 
         It 'Includes namespace field when -Namespace is specified' -Skip:(-not $script:KubectlAvailable) {
             $result = New-KubernetesSecret -Name 'test-secret' -FromLiteral @{ key = 'value' } -Namespace 'production' -AsHashtable
-
             $result.metadata.namespace | Should -Be 'production'
         }
 
         It 'Includes namespace: default when explicitly passed' -Skip:(-not $script:KubectlAvailable) {
             $result = New-KubernetesSecret -Name 'test-secret' -FromLiteral @{ key = 'value' } -Namespace 'default' -AsHashtable
-
             $result.metadata.namespace | Should -Be 'default'
         }
     }
