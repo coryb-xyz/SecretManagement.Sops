@@ -1,32 +1,26 @@
 BeforeAll {
-    # Import test helpers
     $testHelpersPath = Join-Path $PSScriptRoot 'TestHelpers.psm1'
     Import-Module $testHelpersPath -Force
 
-    # Save environment state (location, environment variables, registered vaults)
     $script:testState = Initialize-TestEnvironment
 
-    # Dot-source the private function
     $functionPath = Join-Path $PSScriptRoot '..' 'SecretManagement.Sops' 'Private' 'Get-SopsConfiguration.ps1'
     . $functionPath
 
-    # Import powershell-yaml for test setup
     Import-Module powershell-yaml -ErrorAction Stop
 }
 
 AfterAll {
-    # Restore environment state (location, environment variables, cleanup test vaults)
     Restore-TestEnvironment -State $script:testState
 }
 
 Describe 'Get-SopsConfiguration' {
     BeforeAll {
-        # Create a temporary test vault directory
         $script:testVaultPath = Join-Path $TestDrive 'test-vault'
-        New-Item -Path $script:testVaultPath -ItemType Directory -Force | Out-Null
+        $null = New-Item -Path $script:testVaultPath -ItemType Directory -Force
     }
 
-    Context 'Basic functionality (existing tests)' {
+    Context 'Basic functionality' {
         It 'Returns empty result when .sops.yaml does not exist' {
             $result = Get-SopsConfiguration -VaultPath $script:testVaultPath
             $result.Found | Should -BeFalse
@@ -34,7 +28,6 @@ Describe 'Get-SopsConfiguration' {
         }
 
         It 'Extracts unencrypted_suffix values' {
-            # Create .sops.yaml with unencrypted_suffix
             $sopsYaml = @"
 creation_rules:
   - path_regex: \.yaml$
@@ -49,7 +42,6 @@ creation_rules:
         }
 
         It 'Returns unique suffixes only' {
-            # Create .sops.yaml with duplicate unencrypted_suffix
             $sopsYaml = @"
 creation_rules:
   - path_regex: dev[/\\].*\.yaml$
@@ -67,9 +59,8 @@ creation_rules:
         }
     }
 
-    Context 'CreationRules extraction (new functionality)' {
+    Context 'CreationRules extraction' {
         BeforeEach {
-            # Create .sops.yaml with multiple rules matching TestData structure
             $sopsYaml = @"
 creation_rules:
   - path_regex: migration[/\\].*\.yaml$
@@ -114,7 +105,6 @@ creation_rules:
 
         It 'Handles rules with no unencrypted_suffix in backward compatibility' {
             $config = Get-SopsConfiguration -VaultPath $script:testVaultPath
-            # First rule has no unencrypted_suffix, should not appear in UnencryptedSuffixes
             $config.UnencryptedSuffixes | Should -Not -Contain $null
         }
     }
@@ -134,10 +124,7 @@ creation_rules:
         }
 
         It 'Handles .sops.yaml with no creation_rules' {
-            $sopsYaml = @"
-# Empty config
-"@
-            $sopsYaml | Out-File -FilePath (Join-Path $script:testVaultPath '.sops.yaml') -Encoding utf8
+            '# Empty config' | Out-File -FilePath (Join-Path $script:testVaultPath '.sops.yaml') -Encoding utf8
 
             $result = Get-SopsConfiguration -VaultPath $script:testVaultPath
             $result.CreationRules | Should -BeNullOrEmpty

@@ -1,36 +1,28 @@
-﻿#Requires -Modules @{ ModuleName='Pester'; ModuleVersion='5.0.0' }
+#Requires -Modules @{ ModuleName='Pester'; ModuleVersion='5.0.0' }
 
 BeforeAll {
-    # Import test helpers for isolation utilities
     $testHelpersPath = Join-Path $PSScriptRoot 'TestHelpers.psm1'
     Import-Module $testHelpersPath -Force
 
-    # Save environment state (location, environment variables, registered vaults)
     $script:testState = Initialize-TestEnvironment
 
-    # Auto-bootstrap test data if missing
     if (-not (Initialize-TestDataIfMissing)) {
         throw "Cannot run tests: Test data initialization failed. Please ensure SOPS and age are installed."
     }
 
-    # Clean up any orphaned test vaults from previous runs
     Remove-OrphanedTestVaults
 
     # Remove any existing module instances to prevent InModuleScope conflicts
     Get-Module 'SecretManagement.Sops' | Remove-Module -Force -ErrorAction SilentlyContinue
 
-    # Import the main module
     $modulePath = Join-Path $PSScriptRoot '..\SecretManagement.Sops\SecretManagement.Sops.psd1'
     Import-Module $modulePath -Force
 
-    # Test data directory
     $script:TestDataPath = Join-Path $PSScriptRoot 'TestData'
 
-    # Configure test-specific age key in isolated environment
     $testKeyFile = Join-Path $script:TestDataPath 'test-key.txt'
     if (Test-Path $testKeyFile) {
         $env:SOPS_AGE_KEY_FILE = $testKeyFile
-        Write-Verbose "Configured test-isolated SOPS_AGE_KEY_FILE: $testKeyFile"
     }
     else {
         Write-Warning "Test key file not found: $testKeyFile. Some tests may fail."
@@ -38,7 +30,6 @@ BeforeAll {
 }
 
 AfterAll {
-    # Restore environment state (location, environment variables, cleanup test vaults)
     Restore-TestEnvironment -State $script:testState
 }
 
@@ -110,7 +101,6 @@ Describe 'Resolve-SecretName' -Tag 'ReadSupport', 'Unit' {
 
 Describe 'Integration Tests' -Tag 'ReadSupport', 'Integration', 'RequiresSops' {
     BeforeAll {
-        # Store test key file path for vault registration
         $testKeyFile = Join-Path $script:TestDataPath 'test-key.txt'
         if (-not (Test-Path $testKeyFile)) {
             Write-Warning "Test key file not found: $testKeyFile. Some tests may fail."
@@ -139,7 +129,6 @@ Describe 'Integration Tests' -Tag 'ReadSupport', 'Integration', 'RequiresSops' {
 
         It 'Indexes Kubernetes Secret YAML files' {
             $index = Get-SecretIndex -Path $script:TestDataPath -FilePattern 'k8s-secret.yaml' -Recurse $false
-            # Since we return raw YAML, the index uses the filename, not K8s metadata.name
             $k8sEntry = $index | Where-Object { $_.Name -match 'k8s-secret' } | Select-Object -First 1
             $k8sEntry | Should -Not -BeNullOrEmpty
             $k8sEntry.Name | Should -Be 'k8s-secret'
@@ -148,13 +137,10 @@ Describe 'Integration Tests' -Tag 'ReadSupport', 'Integration', 'RequiresSops' {
 
     Context 'SecretManagement Extension' {
         BeforeAll {
-            # Import SecretManagement module
             Import-Module Microsoft.PowerShell.SecretManagement -Force
 
-            # Configure test environment with AGE key
             $env:SOPS_AGE_KEY_FILE = $testKeyFile
 
-            # Register test vault with unique isolated name
             $modulePath = Join-Path $PSScriptRoot '..' 'SecretManagement.Sops'
             $script:VaultName = New-IsolatedTestVault -BaseName 'SopsMainTest' -ModulePath $modulePath -VaultParameters @{
                 Path        = $script:TestDataPath
@@ -162,7 +148,6 @@ Describe 'Integration Tests' -Tag 'ReadSupport', 'Integration', 'RequiresSops' {
                 Recurse     = $false
                 AgeKeyFile  = $testKeyFile
             }
-            Write-Verbose "Registered isolated test vault: $script:VaultName"
         }
 
         AfterAll {
@@ -188,7 +173,6 @@ Describe 'Integration Tests' -Tag 'ReadSupport', 'Integration', 'RequiresSops' {
         }
 
         It 'Get-Secret retrieves simple secret' {
-            # This will depend on the actual secret names in your test data
             $secrets = Get-SecretInfo -Vault $script:VaultName
             $firstSecret = $secrets | Select-Object -First 1
 
@@ -200,20 +184,17 @@ Describe 'Integration Tests' -Tag 'ReadSupport', 'Integration', 'RequiresSops' {
 
         It 'Get-Secret retrieves K8s Secret as raw YAML' {
             $secret = Get-Secret -Name 'k8s-secret' -Vault $script:VaultName -AsPlainText
-            # Should return raw YAML string, not typed object
             $secret | Should -BeOfType [string]
             $secret | Should -Match 'license-key'
             $secret | Should -Match 'software-license'
         }
 
         It 'Get-Secret returns raw YAML for username/password' {
-            # Find the credentials secret
             $secrets = Get-SecretInfo -Vault $script:VaultName
             $credSecret = $secrets | Where-Object { $_.Name -match 'credentials' } | Select-Object -First 1
 
             if ($credSecret) {
                 $cred = Get-Secret -Name $credSecret.Name -Vault $script:VaultName -AsPlainText
-                # Should return raw YAML string, not PSCredential
                 $cred | Should -BeOfType [string]
                 $cred | Should -Match 'username'
                 $cred | Should -Match 'password'
@@ -237,16 +218,5 @@ Describe 'Error Handling' -Tag 'ReadSupport', 'Unit' {
 
             { Invoke-SopsDecrypt -FilePath $testFile } | Should -Throw '*SOPS binary not found*'
         }
-    }
-
-    It 'Provides helpful error for Azure CLI issues' {
-        Mock Test-SopsAvailable { $true } -ModuleName 'SecretManagement.Sops'
-        Mock Invoke-Expression {
-            $global:LASTEXITCODE = 1
-            return "az: command not found"
-        } -ModuleName 'SecretManagement.Sops'
-
-        # This test would need more sophisticated mocking to work properly
-        # Left as a placeholder for future enhancement
     }
 }

@@ -7,12 +7,11 @@ function ConvertTo-SecretYaml {
     Converts SecretManagement framework secret types (String, SecureString,
     PSCredential, Hashtable, Byte[]) to structures suitable for YAML serialization.
 
-    Per user requirements:
     - String values are returned as-is (plain text)
     - SecureString converted to plain text
     - PSCredential converted to username/password hashtable
-    - Hashtable used as-is (especially for K8s secrets with apiVersion/kind/metadata)
-    - Byte[] converted to base64
+    - Hashtable passed through (supports K8s secrets with apiVersion/kind/metadata)
+    - Byte[] converted to base64 with encoding metadata
 
     .PARAMETER Secret
     The secret object to convert.
@@ -26,7 +25,8 @@ function ConvertTo-SecretYaml {
 
     .PARAMETER EnableYamlParsing
     Enable YAML string parsing to convert structured YAML strings to hashtables.
-    Used by the Extension module for Set-Secret operations.
+    When enabled, Byte[] returns a plain base64 string instead of structured format,
+    and unsupported types throw instead of emitting a warning.
 
     .OUTPUTS
     Object - A YAML-compatible structure.
@@ -42,11 +42,6 @@ function ConvertTo-SecretYaml {
     .EXAMPLE
     ConvertTo-SecretYaml -Secret @{ username = 'admin'; password = 'secret' } -Name 'creds'
     # Returns: @{ username = 'admin'; password = 'secret' }
-
-    .EXAMPLE
-    $k8sSecret = @{ apiVersion = 'v1'; kind = 'Secret'; stringData = @{ key = 'value' } }
-    ConvertTo-SecretYaml -Secret $k8sSecret -Name 'myapp'
-    # Returns: $k8sSecret (as-is, per user preference for K8s secrets)
     #>
     [CmdletBinding()]
     param(
@@ -56,25 +51,21 @@ function ConvertTo-SecretYaml {
         [Parameter(Mandatory)]
         [string]$Name,
 
-        [Parameter()]
         [switch]$EnablePathSyntaxDetection,
 
-        [Parameter()]
         [switch]$EnableYamlParsing
     )
 
-    # String handling with optional path syntax detection and YAML parsing
     if ($Secret -is [string]) {
-        # Check for path-based syntax first (e.g., ".stringData.password: value")
-        # Path syntax is valid YAML but must be preserved as string for ConvertTo-SopsSetPathFromString
+        # Path syntax (e.g., ".stringData.password: value") must be preserved as-is
+        # for ConvertTo-SopsSetPathFromString; check before YAML parsing since it is valid YAML
         if ($EnablePathSyntaxDetection) {
-            $hasPathSyntaxCommand = Get-Command Test-PathBasedSyntax -ErrorAction SilentlyContinue
-            if ($hasPathSyntaxCommand -and (Test-PathBasedSyntax -InputString $Secret)) {
+            $hasCommand = Get-Command Test-PathBasedSyntax -ErrorAction SilentlyContinue
+            if ($hasCommand -and (Test-PathBasedSyntax -InputString $Secret)) {
                 return $Secret
             }
         }
 
-        # Try to parse as YAML if enabled
         if ($EnableYamlParsing) {
             try {
                 Import-Module powershell-yaml -ErrorAction Stop
@@ -84,7 +75,7 @@ function ConvertTo-SecretYaml {
                     return $parsed
                 }
 
-                if ($null -ne $parsed -and $parsed -is [PSCustomObject]) {
+                if ($parsed -is [PSCustomObject]) {
                     $ht = @{}
                     foreach ($prop in $parsed.PSObject.Properties) {
                         $ht[$prop.Name] = $prop.Value
@@ -99,12 +90,11 @@ function ConvertTo-SecretYaml {
 
         return $Secret
     }
-    # SecureString: convert to plain text
+
     if ($Secret -is [System.Security.SecureString]) {
         return $Secret | ConvertFrom-SecureString -AsPlainText
     }
 
-    # PSCredential: convert to username/password hashtable
     if ($Secret -is [PSCredential]) {
         return @{
             username = $Secret.UserName
@@ -112,23 +102,18 @@ function ConvertTo-SecretYaml {
         }
     }
 
-    # Hashtable/OrderedDictionary: pass through as-is (supports K8s secrets with apiVersion/kind/metadata)
     if ($Secret -is [hashtable] -or $Secret -is [System.Collections.Specialized.OrderedDictionary]) {
         return $Secret
     }
 
-    # Byte array: convert to base64
     if ($Secret -is [byte[]]) {
         $base64 = [Convert]::ToBase64String($Secret)
-
-        # Extension module uses simple base64 string, main module uses structured format
         if ($EnableYamlParsing) {
             return $base64
         }
         return @{ data = $base64; encoding = 'base64' }
     }
 
-    # Other dictionary types: convert to hashtable
     if ($Secret -is [System.Collections.IDictionary]) {
         $ht = @{}
         foreach ($key in $Secret.Keys) {
@@ -137,7 +122,6 @@ function ConvertTo-SecretYaml {
         return $ht
     }
 
-    # Unsupported types
     $typeName = $Secret.GetType().FullName
     if ($EnableYamlParsing) {
         throw "Unsupported secret type: $typeName. Supported types: String, SecureString, PSCredential, Byte[], Hashtable"

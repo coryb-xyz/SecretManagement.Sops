@@ -1,36 +1,24 @@
 BeforeAll {
-    # Import test helpers
     $testHelpersPath = Join-Path $PSScriptRoot 'TestHelpers.psm1'
     Import-Module $testHelpersPath -Force
 
-    # Save environment state (location, environment variables, registered vaults)
     $script:testState = Initialize-TestEnvironment
 
-    # Dot-source the private functions
-    $privateFunctions = @(
-        'Get-SopsConfiguration.ps1',
-        'Test-PathMatchesRegex.ps1',
-        'Test-FileContainsKeys.ps1'
-    )
-    foreach ($function in $privateFunctions) {
-        $functionPath = Join-Path $PSScriptRoot '..' 'SecretManagement.Sops' 'Private' $function
-        if (Test-Path $functionPath) {
-            . $functionPath
-        }
+    # Dot-source required private functions
+    $privatePath = Join-Path $PSScriptRoot '..' 'SecretManagement.Sops' 'Private'
+    foreach ($function in @('Get-SopsConfiguration.ps1', 'Test-PathMatchesRegex.ps1', 'Test-FileContainsKeys.ps1')) {
+        $functionPath = Join-Path $privatePath $function
+        if (Test-Path $functionPath) { . $functionPath }
     }
 
     # Dot-source the public function
     $publicFunctionPath = Join-Path $PSScriptRoot '..' 'SecretManagement.Sops' 'Public' 'Get-SopsEncryptionCandidates.ps1'
-    if (Test-Path $publicFunctionPath) {
-        . $publicFunctionPath
-    }
+    if (Test-Path $publicFunctionPath) { . $publicFunctionPath }
 
-    # Import powershell-yaml for test setup
     Import-Module powershell-yaml -ErrorAction Stop
 }
 
 AfterAll {
-    # Restore environment state (location, environment variables, cleanup test vaults)
     Restore-TestEnvironment -State $script:testState
 }
 
@@ -38,8 +26,8 @@ Describe 'Test-PathMatchesRegex' {
     Context 'Basic path matching' {
         It 'Matches Windows paths with backslashes' {
             $tempVault = Join-Path $TestDrive 'vault'
-            New-Item -Path $tempVault -ItemType Directory -Force | Out-Null
-            New-Item -Path (Join-Path $tempVault 'migration') -ItemType Directory -Force | Out-Null
+            $null = New-Item -Path $tempVault -ItemType Directory -Force
+            $null = New-Item -Path (Join-Path $tempVault 'migration') -ItemType Directory -Force
             $testFile = Join-Path $tempVault 'migration\k8s.yaml'
 
             Test-PathMatchesRegex -FilePath $testFile `
@@ -49,9 +37,8 @@ Describe 'Test-PathMatchesRegex' {
 
         It 'Matches Unix-style paths with forward slashes' {
             $tempVault = Join-Path $TestDrive 'vault'
-            New-Item -Path $tempVault -ItemType Directory -Force | Out-Null
+            $null = New-Item -Path $tempVault -ItemType Directory -Force
 
-            # Simulate Unix path (will be normalized)
             Test-PathMatchesRegex -FilePath 'migration/k8s.yaml' `
                 -VaultPath $tempVault `
                 -PathRegex 'migration[/\\].*\.yaml$' | Should -BeTrue
@@ -59,8 +46,8 @@ Describe 'Test-PathMatchesRegex' {
 
         It 'Uses relative path from vault root' {
             $tempVault = Join-Path $TestDrive 'vault'
-            New-Item -Path $tempVault -ItemType Directory -Force | Out-Null
-            New-Item -Path (Join-Path $tempVault 'apps\web') -ItemType Directory -Force | Out-Null
+            $null = New-Item -Path $tempVault -ItemType Directory -Force
+            $null = New-Item -Path (Join-Path $tempVault 'apps\web') -ItemType Directory -Force
             $testFile = Join-Path $tempVault 'apps\web\config.yaml'
 
             Test-PathMatchesRegex -FilePath $testFile `
@@ -70,7 +57,7 @@ Describe 'Test-PathMatchesRegex' {
 
         It 'Returns false when path does not match regex' {
             $tempVault = Join-Path $TestDrive 'vault'
-            New-Item -Path $tempVault -ItemType Directory -Force | Out-Null
+            $null = New-Item -Path $tempVault -ItemType Directory -Force
             $testFile = Join-Path $tempVault 'other\file.yaml'
 
             Test-PathMatchesRegex -FilePath $testFile `
@@ -80,7 +67,7 @@ Describe 'Test-PathMatchesRegex' {
 
         It 'Matches files at vault root with simple regex' {
             $tempVault = Join-Path $TestDrive 'vault'
-            New-Item -Path $tempVault -ItemType Directory -Force | Out-Null
+            $null = New-Item -Path $tempVault -ItemType Directory -Force
             $testFile = Join-Path $tempVault 'config.yaml'
 
             Test-PathMatchesRegex -FilePath $testFile `
@@ -93,7 +80,7 @@ Describe 'Test-PathMatchesRegex' {
 Describe 'Test-FileContainsKeys' {
     BeforeAll {
         $script:tempVault = Join-Path $TestDrive 'vault-keys'
-        New-Item -Path $script:tempVault -ItemType Directory -Force | Out-Null
+        $null = New-Item -Path $script:tempVault -ItemType Directory -Force
     }
 
     Context 'K8s Secret key matching' {
@@ -186,7 +173,6 @@ this is not: [valid yaml
 
 Describe 'Get-SopsEncryptionCandidates Integration Tests' {
     BeforeAll {
-        # Use existing TestData directory
         $script:testVaultPath = Join-Path $PSScriptRoot 'TestData'
     }
 
@@ -194,7 +180,6 @@ Describe 'Get-SopsEncryptionCandidates Integration Tests' {
         It 'Returns unencrypted files matching .sops.yaml rules' {
             $candidates = Get-SopsEncryptionCandidates -Path $script:testVaultPath
 
-            # Should include plaintext files matching rules (catch-all rule)
             $k8sPlainFile = Join-Path $script:testVaultPath 'k8s-secret-plain.yaml'
             $candidates | Should -Contain $k8sPlainFile
         }
@@ -202,7 +187,6 @@ Describe 'Get-SopsEncryptionCandidates Integration Tests' {
         It 'Excludes already-encrypted files' {
             $candidates = Get-SopsEncryptionCandidates -Path $script:testVaultPath
 
-            # Should not include encrypted files
             $encryptedFile = Join-Path $script:testVaultPath 'credentials.yaml'
             $candidates | Should -Not -Contain $encryptedFile
         }
@@ -210,7 +194,6 @@ Describe 'Get-SopsEncryptionCandidates Integration Tests' {
         It 'Excludes files with unencrypted_suffix' {
             $candidates = Get-SopsEncryptionCandidates -Path $script:testVaultPath
 
-            # Should exclude files matching unencrypted_suffix pattern
             $unencryptedFile = Join-Path $script:testVaultPath 'config_unencrypted.yaml'
             $candidates | Should -Not -Contain $unencryptedFile
         }
@@ -225,14 +208,14 @@ Describe 'Get-SopsEncryptionCandidates Integration Tests' {
         It 'Respects encrypted_regex for content filtering' {
             $candidates = Get-SopsEncryptionCandidates -Path $script:testVaultPath
 
-            # k8s-config-plain.yaml has no data/stringData keys - should be excluded
+            # k8s-config-plain.yaml has no data/stringData keys
             $configFile = Join-Path $script:testVaultPath 'migration\k8s-config-plain.yaml'
             $candidates | Should -Not -Contain $configFile
         }
 
         It 'Returns empty array when no .sops.yaml found' {
             $emptyVault = Join-Path $TestDrive 'empty-vault'
-            New-Item -Path $emptyVault -ItemType Directory -Force | Out-Null
+            $null = New-Item -Path $emptyVault -ItemType Directory -Force
 
             $candidates = Get-SopsEncryptionCandidates -Path $emptyVault -WarningAction SilentlyContinue
             $candidates | Should -BeNullOrEmpty
@@ -241,12 +224,10 @@ Describe 'Get-SopsEncryptionCandidates Integration Tests' {
 
     Context 'First-match rule semantics' {
         It 'Applies first matching rule and stops processing' {
-            # Create temp vault with overlapping rules
             $tempVault = Join-Path $TestDrive 'rule-order-vault'
-            New-Item -Path $tempVault -ItemType Directory -Force | Out-Null
-            New-Item -Path (Join-Path $tempVault 'migration') -ItemType Directory -Force | Out-Null
+            $null = New-Item -Path $tempVault -ItemType Directory -Force
+            $null = New-Item -Path (Join-Path $tempVault 'migration') -ItemType Directory -Force
 
-            # Create .sops.yaml with overlapping rules
             $sopsYaml = @"
 creation_rules:
   - path_regex: migration[/\\].*\.yaml$
@@ -257,7 +238,6 @@ creation_rules:
 "@
             $sopsYaml | Out-File -FilePath (Join-Path $tempVault '.sops.yaml') -Encoding utf8
 
-            # Create file matching first rule
             $migrationFile = @"
 apiVersion: v1
 kind: Secret
@@ -268,8 +248,6 @@ stringData:
             $migrationFile | Out-File -FilePath $migrationFilePath -Encoding utf8
 
             $candidates = Get-SopsEncryptionCandidates -Path $tempVault
-
-            # File should be included (matches first rule with encrypted_regex)
             $candidates | Should -Contain $migrationFilePath
         }
     }
@@ -277,7 +255,7 @@ stringData:
     Context 'Error handling and edge cases' {
         It 'Handles vault with only encrypted files' {
             $tempVault = Join-Path $TestDrive 'all-encrypted-vault'
-            New-Item -Path $tempVault -ItemType Directory -Force | Out-Null
+            $null = New-Item -Path $tempVault -ItemType Directory -Force
 
             $sopsYaml = @"
 creation_rules:
@@ -286,10 +264,8 @@ creation_rules:
 "@
             $sopsYaml | Out-File -FilePath (Join-Path $tempVault '.sops.yaml') -Encoding utf8
 
-            # Create an already-encrypted file (copy from TestData)
             $sourceEncrypted = Join-Path $script:testVaultPath 'credentials.yaml'
-            $destEncrypted = Join-Path $tempVault 'credentials.yaml'
-            Copy-Item -Path $sourceEncrypted -Destination $destEncrypted
+            Copy-Item -Path $sourceEncrypted -Destination (Join-Path $tempVault 'credentials.yaml')
 
             $candidates = Get-SopsEncryptionCandidates -Path $tempVault
             $candidates | Should -BeNullOrEmpty
@@ -297,7 +273,7 @@ creation_rules:
 
         It 'Handles empty vault directory' {
             $emptyVault = Join-Path $TestDrive 'truly-empty-vault'
-            New-Item -Path $emptyVault -ItemType Directory -Force | Out-Null
+            $null = New-Item -Path $emptyVault -ItemType Directory -Force
 
             $sopsYaml = @"
 creation_rules:
@@ -312,9 +288,8 @@ creation_rules:
 
         It 'Extracts file patterns from path_regex rules' {
             $tempVault = Join-Path $TestDrive 'pattern-extraction-vault'
-            New-Item -Path $tempVault -ItemType Directory -Force | Out-Null
+            $null = New-Item -Path $tempVault -ItemType Directory -Force
 
-            # Create .sops.yaml with .yaml extension pattern
             $sopsYaml = @"
 creation_rules:
   - path_regex: \.yaml$
@@ -322,10 +297,7 @@ creation_rules:
 "@
             $sopsYaml | Out-File -FilePath (Join-Path $tempVault '.sops.yaml') -Encoding utf8
 
-            # Create YAML file (should be found)
             'key: value' | Out-File -FilePath (Join-Path $tempVault 'config.yaml') -Encoding utf8
-
-            # Create non-YAML file (should be ignored)
             'text' | Out-File -FilePath (Join-Path $tempVault 'readme.txt') -Encoding utf8
 
             $candidates = Get-SopsEncryptionCandidates -Path $tempVault
@@ -335,10 +307,9 @@ creation_rules:
 
         It 'Always recurses through subdirectories' {
             $tempVault = Join-Path $TestDrive 'always-recurse-vault'
-            New-Item -Path $tempVault -ItemType Directory -Force | Out-Null
-            New-Item -Path (Join-Path $tempVault 'subdir\nested') -ItemType Directory -Force | Out-Null
+            $null = New-Item -Path $tempVault -ItemType Directory -Force
+            $null = New-Item -Path (Join-Path $tempVault 'subdir\nested') -ItemType Directory -Force
 
-            # Create .sops.yaml
             $sopsYaml = @"
 creation_rules:
   - path_regex: \.yaml$
@@ -346,12 +317,10 @@ creation_rules:
 "@
             $sopsYaml | Out-File -FilePath (Join-Path $tempVault '.sops.yaml') -Encoding utf8
 
-            # Create files at multiple levels
             'key: value' | Out-File -FilePath (Join-Path $tempVault 'root.yaml') -Encoding utf8
             'key: value' | Out-File -FilePath (Join-Path $tempVault 'subdir\mid.yaml') -Encoding utf8
             'key: value' | Out-File -FilePath (Join-Path $tempVault 'subdir\nested\deep.yaml') -Encoding utf8
 
-            # Should find all files (always recurses)
             $candidates = Get-SopsEncryptionCandidates -Path $tempVault
             $candidates.Count | Should -Be 3
             $candidates | Should -Contain (Join-Path $tempVault 'root.yaml')
@@ -361,9 +330,8 @@ creation_rules:
 
         It 'Handles multiple file extensions from different rules' {
             $tempVault = Join-Path $TestDrive 'multi-extension-vault'
-            New-Item -Path $tempVault -ItemType Directory -Force | Out-Null
+            $null = New-Item -Path $tempVault -ItemType Directory -Force
 
-            # Create .sops.yaml with both .yaml and .json patterns
             $sopsYaml = @"
 creation_rules:
   - path_regex: \.yaml$
@@ -373,7 +341,6 @@ creation_rules:
 "@
             $sopsYaml | Out-File -FilePath (Join-Path $tempVault '.sops.yaml') -Encoding utf8
 
-            # Create both file types
             'key: value' | Out-File -FilePath (Join-Path $tempVault 'config.yaml') -Encoding utf8
             '{"key": "value"}' | Out-File -FilePath (Join-Path $tempVault 'config.json') -Encoding utf8
             'text' | Out-File -FilePath (Join-Path $tempVault 'readme.txt') -Encoding utf8

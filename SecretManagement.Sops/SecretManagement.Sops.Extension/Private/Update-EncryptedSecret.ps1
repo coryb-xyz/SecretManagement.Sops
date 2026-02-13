@@ -1,3 +1,42 @@
+function Get-K8sDocumentName {
+    <#
+    .SYNOPSIS
+    Extracts the metadata.name from a complete Kubernetes-style document.
+
+    .DESCRIPTION
+    Returns the metadata.name value if the input is a dictionary containing
+    apiVersion, kind, and metadata.name keys (a complete K8s manifest).
+    Returns $null if the input is not a K8s-style document.
+
+    Uses Contains() instead of ContainsKey() because OrderedDictionary
+    (from [ordered]@{}) only implements IDictionary.Contains(), while
+    ContainsKey() exists only on Hashtable.
+
+    .PARAMETER Content
+    The object to inspect.
+
+    .OUTPUTS
+    String or $null.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [object]$Content
+    )
+
+    if ($Content -isnot [System.Collections.IDictionary]) { return $null }
+    if (-not $Content.Contains('kind')) { return $null }
+    if (-not $Content.Contains('apiVersion')) { return $null }
+    if (-not $Content.Contains('metadata')) { return $null }
+
+    $metadata = $Content['metadata']
+    if ($metadata -isnot [System.Collections.IDictionary]) { return $null }
+    if (-not $metadata.Contains('name')) { return $null }
+
+    return $metadata['name']
+}
+
 function Update-EncryptedSecret {
     <#
     .SYNOPSIS
@@ -58,20 +97,10 @@ function Update-EncryptedSecret {
         [hashtable]$Metadata
     )
 
-    # Detect complete K8s-style document (has apiVersion, kind, metadata.name).
-    # When found in a multi-document file, use metadata.name for targeting and
-    # allow appending if no matching document exists.
-    $extractedDocName = $null
-    # Use Contains() not ContainsKey(): OrderedDictionary (from [ordered]@{}) only
-    # implements IDictionary.Contains(); ContainsKey() exists only on Hashtable.
-    if ($Content -is [System.Collections.IDictionary] -and
-        $Content.Contains('kind') -and $Content.Contains('apiVersion') -and
-        $Content.Contains('metadata') -and $Content['metadata'] -is [System.Collections.IDictionary] -and
-        $Content['metadata'].Contains('name')) {
-        $extractedDocName = $Content['metadata']['name']
-    }
+    # For complete K8s documents in multi-document files, use metadata.name
+    # for targeting and allow appending if no matching document exists.
+    $extractedDocName = Get-K8sDocumentName -Content $Content
 
-    # Convert content to SOPS set paths based on type
     $setPaths = if ($Content -is [string]) {
         ConvertTo-SopsSetPathFromString -Secret $Content
     }
@@ -88,14 +117,13 @@ function Update-EncryptedSecret {
             VaultParameters = $VaultParameters
             SecretName      = $SecretName
         }
+
         if ($Metadata -and $Metadata.ContainsKey('DocumentName')) {
-            # Explicit DocumentName: keep existing error-if-not-found behavior
-            $splatParams.DocumentName = $Metadata.DocumentName
+            $splatParams['DocumentName'] = $Metadata.DocumentName
         }
         elseif ($extractedDocName) {
-            # Complete document detected: target by its metadata.name, append if absent
-            $splatParams.DocumentName     = $extractedDocName
-            $splatParams.AppendIfNotFound = $true
+            $splatParams['DocumentName'] = $extractedDocName
+            $splatParams['AppendIfNotFound'] = $true
         }
 
         Update-MultiDocumentSecret @splatParams
@@ -142,19 +170,11 @@ function ConvertTo-SopsValueString {
         $Value
     )
 
-    if ($Value -eq '') {
-        return '""'
-    }
+    if ($Value -eq '') { return '""' }
+    if ($Value -is [bool]) { return $Value.ToString().ToLower() }
+    if ($Value -is [int] -or $Value -is [long] -or $Value -is [double]) { return $Value.ToString() }
 
-    if ($Value -is [bool]) {
-        return $Value.ToString().ToLower()
-    }
-
-    if ($Value -is [int] -or $Value -is [long] -or $Value -is [double]) {
-        return $Value.ToString()
-    }
-
-    # String value - wrap in quotes and escape internal quotes
+    # String value: wrap in quotes and escape internal quotes
     $escaped = $Value -replace '"', '\"'
     return "`"$escaped`""
 }

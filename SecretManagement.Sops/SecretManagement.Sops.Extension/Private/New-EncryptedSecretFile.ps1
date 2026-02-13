@@ -46,81 +46,83 @@ function New-EncryptedSecretFile {
         [string]$SecretName
     )
 
-    # Use .insecure.yaml extension for temporary plaintext file
     $insecureFilePath = $FilePath -replace '\.yaml$', '.insecure.yaml'
 
     try {
-        # Convert to YAML and write to insecure temp file at final location
         Import-Module powershell-yaml -ErrorAction Stop
 
-        if ($Content -is [string]) {
-            # Parse path-based syntax into setPaths
-            $setPaths = ConvertTo-SopsSetPathFromString -Secret $Content
-
-            # Reconstruct hashtable from setPaths
-            $contentHash = @{}
-            foreach ($item in $setPaths) {
-                $pathParts = $item.Path -replace '^\["|"\]$', '' -split '"\]\["'
-                $current = $contentHash
-                for ($i = 0; $i -lt ($pathParts.Count - 1); $i++) {
-                    if (-not $current.ContainsKey($pathParts[$i])) {
-                        $current[$pathParts[$i]] = @{}
-                    }
-                    $current = $current[$pathParts[$i]]
-                }
-                $current[$pathParts[-1]] = $item.Value
-            }
-
-            $yamlContent = $contentHash | ConvertTo-Yaml
+        $yamlContent = if ($Content -is [string]) {
+            ConvertTo-HashtableFromSetPath -Secret $Content | ConvertTo-Yaml
         }
         else {
-            $yamlContent = $Content | ConvertTo-Yaml
+            $Content | ConvertTo-Yaml
         }
 
         Set-Content -Path $insecureFilePath -Value $yamlContent -NoNewline
-
-        # Encrypt in-place so SOPS uses the actual file path for rule matching.
-        # For path-based encryption to work, SOPS needs:
-        # 1. File path relative to the .sops.yaml config file
-        # 2. Working directory set to the vault root (where .sops.yaml lives)
-        #
-        # This ensures path_regex patterns in .sops.yaml match correctly.
-        # Example: path_regex: apps/prod/.*\.yaml$ matches apps/prod/keys.yaml
-
-        # Move plaintext to final location, then encrypt in-place from vault root
         Move-Item -Path $insecureFilePath -Destination $FilePath -Force
 
-        # Calculate relative path from vault root for SOPS path matching.
-        # Keep platform-native path separators because SOPS regex patterns must match the platform's format.
+        # SOPS needs a relative path from the vault root (where .sops.yaml lives)
+        # so that path_regex patterns match correctly.
         $relativePath = [System.IO.Path]::GetRelativePath($VaultParameters.Path, $FilePath)
 
-        $previousLocation = Get-Location
+        Push-Location -Path $VaultParameters.Path
         try {
-            Set-Location -Path $VaultParameters.Path
-
-            try {
-                Invoke-SopsEncrypt -FilePath $relativePath -InPlace -VaultParameters $VaultParameters
-            }
-            catch {
-                # Encryption failed - clean up the unencrypted file
-                $absolutePath = Join-Path $VaultParameters.Path $relativePath
-                if (Test-Path $absolutePath) {
-                    Remove-Item $absolutePath -Force -ErrorAction SilentlyContinue
-                }
-                throw
-            }
+            Invoke-SopsEncrypt -FilePath $relativePath -InPlace -VaultParameters $VaultParameters
         }
         finally {
-            Set-Location -Path $previousLocation
+            Pop-Location
         }
     }
     catch {
+        # Clean up the plaintext file on any failure (encryption or otherwise)
+        Remove-Item $FilePath -Force -ErrorAction SilentlyContinue
         throw "Failed to create secret '$SecretName': $_"
     }
     finally {
-        # Clean up insecure file if it still exists (shouldn't, but be safe)
-        if (Test-Path $insecureFilePath) {
-            Remove-Item $insecureFilePath -Force -ErrorAction SilentlyContinue
-        }
+        Remove-Item $insecureFilePath -Force -ErrorAction SilentlyContinue
     }
+}
+
+function ConvertTo-HashtableFromSetPath {
+    <#
+    .SYNOPSIS
+    Converts a string secret into a hashtable via SOPS set-path parsing.
+
+    .DESCRIPTION
+    Parses a string through ConvertTo-SopsSetPathFromString to get structured
+    path/value pairs, then reconstructs a nested hashtable suitable for YAML
+    serialization. This handles path-based syntax, YAML strings, and plain
+    strings uniformly.
+
+    .PARAMETER Secret
+    The string secret to convert.
+
+    .OUTPUTS
+    Hashtable representing the nested structure.
+    #>
+    [CmdletBinding()]
+    [OutputType([hashtable])]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Secret
+    )
+
+    $setPaths = ConvertTo-SopsSetPathFromString -Secret $Secret
+    $result = @{}
+
+    foreach ($item in $setPaths) {
+        $pathParts = $item.Path -replace '^\["|"\]$', '' -split '"\]\["'
+        $current = $result
+
+        for ($i = 0; $i -lt ($pathParts.Count - 1); $i++) {
+            if (-not $current.ContainsKey($pathParts[$i])) {
+                $current[$pathParts[$i]] = @{}
+            }
+            $current = $current[$pathParts[$i]]
+        }
+
+        $current[$pathParts[-1]] = $item.Value
+    }
+
+    return $result
 }

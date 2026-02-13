@@ -1,101 +1,72 @@
 #Requires -Modules @{ ModuleName='Pester'; ModuleVersion='5.0.0' }
 
-<#
-.SYNOPSIS
-    Phase 3 Write Support Tests for SecretManagement.Sops
-
-.DESCRIPTION
-    Comprehensive test suite for Set-Secret and Remove-Secret operations.
-    These tests validate write functionality including:
-    - Creating new SOPS-encrypted secrets
-    - Updating existing secrets
-    - Removing secrets
-    - File management operations
-    - SOPS encryption/decryption round-trips
-    - All supported secret types
-    - Error handling and edge cases
-
-.NOTES
-    Run with: Invoke-Pester -Path .\Tests\WriteSupport.Tests.ps1 -Tag 'WriteSupport'
-    Skip write tests: Invoke-Pester -ExcludeTag 'WriteSupport'
-#>
-
 BeforeAll {
-    # Import test helpers for isolation utilities
     $testHelpersPath = Join-Path $PSScriptRoot 'TestHelpers.psm1'
     Import-Module $testHelpersPath -Force
 
-    # Auto-bootstrap test data if missing
     if (-not (Initialize-TestDataIfMissing)) {
         throw "Cannot run tests: Test data initialization failed. Please ensure SOPS and age are installed."
     }
 
-    # Clean up any orphaned test vaults from previous runs
     Remove-OrphanedTestVaults
 
-    # Save environment state (location, environment variables, registered vaults) state
     $script:testState = Initialize-TestEnvironment
 
-    # Import the main module
     $modulePath = Join-Path $PSScriptRoot '..\SecretManagement.Sops\SecretManagement.Sops.psd1'
     Import-Module $modulePath -Force
 
-    # Import SecretManagement module
     if (-not (Get-Module Microsoft.PowerShell.SecretManagement -ListAvailable)) {
         throw "Microsoft.PowerShell.SecretManagement module is required. Install with: Install-Module Microsoft.PowerShell.SecretManagement"
     }
     Import-Module Microsoft.PowerShell.SecretManagement -Force
 
-    # Configure test-specific age key in isolated environment
     $testDataPath = Join-Path $PSScriptRoot 'TestData'
     $testKeyFile = Join-Path $testDataPath 'test-key.txt'
-    if (Test-Path $testKeyFile) {
-        $env:SOPS_AGE_KEY_FILE = $testKeyFile
-        Write-Verbose "Configured test-isolated SOPS_AGE_KEY_FILE: $testKeyFile"
-    }
-    else {
+    if (-not (Test-Path $testKeyFile)) {
         throw "Test key file not found: $testKeyFile"
+    }
+    $env:SOPS_AGE_KEY_FILE = $testKeyFile
+
+    # Extract public key once for reuse across vault registrations
+    $ageKeyContent = Get-Content $testKeyFile -Raw
+    if ($ageKeyContent -match 'public key: (.+)') {
+        $script:AgePublicKey = $Matches[1].Trim()
+    }
+
+    # Helper: creates a .sops.yaml config in the given directory
+    function script:New-SopsConfig {
+        param(
+            [string]$Path,
+            [string]$EncryptedRegex
+        )
+        $lines = @(
+            'creation_rules:'
+            '  - path_regex: \.yaml$'
+        )
+        if ($EncryptedRegex) {
+            $lines += "    encrypted_regex: $EncryptedRegex"
+        }
+        $lines += "    age: $script:AgePublicKey"
+        Set-Content -Path (Join-Path $Path '.sops.yaml') -Value ($lines -join "`n")
     }
 }
 
 AfterAll {
-    # Restore environment state (location, environment variables, cleanup test vaults) state
     Restore-TestEnvironment -State $script:testState
 }
 
 Describe 'Set-Secret' -Tag 'WriteSupport', 'Integration' {
     BeforeAll {
-        # Create test vault in TestDrive
         $script:TestSecretsPath = Join-Path $TestDrive 'secrets'
-        New-Item -Path $script:TestSecretsPath -ItemType Directory -Force | Out-Null
+        $null = New-Item -Path $script:TestSecretsPath -ItemType Directory -Force
 
-        # Create .sops.yaml configuration in test vault
-        $testDataPath = Join-Path $PSScriptRoot 'TestData'
-        $testKeyFile = Join-Path $testDataPath 'test-key.txt'
+        New-SopsConfig -Path $script:TestSecretsPath
 
-        if (Test-Path $testKeyFile) {
-            # Read the age public key from the test key file
-            $ageKeyContent = Get-Content $testKeyFile -Raw
-            if ($ageKeyContent -match 'public key: (.+)') {
-                $agePublicKey = $Matches[1].Trim()
-
-                # Create .sops.yaml in test vault
-                $sopsConfig = @"
-creation_rules:
-  - path_regex: \.yaml$
-    age: $agePublicKey
-"@
-                Set-Content -Path (Join-Path $script:TestSecretsPath '.sops.yaml') -Value $sopsConfig
-            }
-        }
-
-        # Register vault with unique isolated name
         $script:TestVaultName = New-IsolatedTestVault -BaseName 'SopsWriteTest' -ModulePath $modulePath -VaultParameters @{
             Path        = $script:TestSecretsPath
             FilePattern = '*.yaml'
             Recurse     = $false
         }
-        Write-Verbose "Registered isolated test vault: $script:TestVaultName"
     }
 
     AfterAll {
@@ -118,7 +89,7 @@ creation_rules:
                     }
                 }
                 catch [Microsoft.PowerShell.SecretManagement.SecretNotFoundException] {
-                    # Expected if test didn't create the secret
+                    Write-Verbose "Secret '$script:TestSecretName' not found during cleanup (expected)"
                 }
                 catch {
                     Write-Warning "Failed to clean up secret '$script:TestSecretName': $_"
@@ -132,7 +103,6 @@ creation_rules:
             Set-Secret -Name $script:TestSecretName -Secret $testValue -Vault $script:TestVaultName
 
             $retrieved = Get-Secret -Name $script:TestSecretName -Vault $script:TestVaultName -AsPlainText
-            # Should return raw YAML string with {value: ...} wrapper
             $retrieved | Should -BeOfType [string]
             Test-YamlContent -YamlContent $retrieved -ExpectedValues @{
                 'value' = $testValue
@@ -145,7 +115,6 @@ creation_rules:
             Set-Secret -Name $script:TestSecretName -Secret $testValue -Vault $script:TestVaultName
 
             $retrieved = Get-Secret -Name $script:TestSecretName -Vault $script:TestVaultName -AsPlainText
-            # Should return raw YAML string with {value: ...} wrapper
             $retrieved | Should -BeOfType [string]
             Test-YamlContent -YamlContent $retrieved -ExpectedValues @{
                 'value' = 'secure-password-123'
@@ -158,7 +127,6 @@ creation_rules:
             Set-Secret -Name $script:TestSecretName -Secret $testCred -Vault $script:TestVaultName
 
             $retrieved = Get-Secret -Name $script:TestSecretName -Vault $script:TestVaultName -AsPlainText
-            # Should return raw YAML string with username/password fields
             $retrieved | Should -BeOfType [string]
             Test-YamlContent -YamlContent $retrieved -ExpectedValues @{
                 'username' = 'testuser'
@@ -177,13 +145,12 @@ creation_rules:
             Set-Secret -Name $script:TestSecretName -Secret $testHash -Vault $script:TestVaultName
 
             $retrieved = Get-Secret -Name $script:TestSecretName -Vault $script:TestVaultName -AsPlainText
-            # Should return raw YAML string with all hashtable fields
             $retrieved | Should -BeOfType [string]
             Test-YamlContent -YamlContent $retrieved -ExpectedValues @{
                 database_host = 'postgres.example.com'
                 database_port = 5432
                 database_name = 'production'
-                ssl_enabled = $true
+                ssl_enabled   = $true
             } | Should -Be $true
         }
 
@@ -193,9 +160,7 @@ creation_rules:
             Set-Secret -Name $script:TestSecretName -Secret $testBytes -Vault $script:TestVaultName
 
             $retrieved = Get-Secret -Name $script:TestSecretName -Vault $script:TestVaultName -AsPlainText
-            # Should return raw YAML string with base64-encoded content
             $retrieved | Should -BeOfType [string]
-            # Byte arrays are stored as base64 in YAML
             $retrieved | Should -Match 'value:'
         }
     }
@@ -224,24 +189,17 @@ creation_rules:
             $filePath = Join-Path $script:TestSecretsPath "$($script:TestSecretName).yaml"
             $content = Get-Content $filePath -Raw
 
-            # SOPS-encrypted files contain metadata
             $content | Should -Match 'sops:'
             $content | Should -Match 'version:'
-
-            # Should contain encrypted data (ENC[...] format)
             $content | Should -Match 'ENC\['
         }
 
         It 'Creates directory structure if missing' {
             $nestedPath = Join-Path $script:TestSecretsPath 'nested\deep\path'
-            # Create the vault base path (vault path must exist)
-            New-Item -Path $nestedPath -ItemType Directory -Force | Out-Null
+            $null = New-Item -Path $nestedPath -ItemType Directory -Force
 
-            # Create .sops.yaml in the nested vault path
-            $sopsConfigContent = Get-Content (Join-Path $script:TestSecretsPath '.sops.yaml') -Raw
-            Set-Content -Path (Join-Path $nestedPath '.sops.yaml') -Value $sopsConfigContent
+            New-SopsConfig -Path $nestedPath
 
-            # Update vault to point to nested location
             Unregister-SecretVault -Name $script:TestVaultName
             Register-SecretVault -Name $script:TestVaultName -ModuleName $modulePath -VaultParameters @{
                 Path        = $nestedPath
@@ -253,7 +211,7 @@ creation_rules:
             $nestedPath | Should -Exist
             Join-Path $nestedPath "$($script:TestSecretName).yaml" | Should -Exist
 
-            # Restore original vault configuration for subsequent tests
+            # Restore original vault configuration
             Unregister-SecretVault -Name $script:TestVaultName
             Register-SecretVault -Name $script:TestVaultName -ModuleName $modulePath -VaultParameters @{
                 Path        = $script:TestSecretsPath
@@ -267,7 +225,6 @@ creation_rules:
 
             $filePath = Join-Path $script:TestSecretsPath "$($script:TestSecretName).yaml"
 
-            # Verify SOPS can decrypt what we just created
             $decrypted = sops -d $filePath 2>&1
             $LASTEXITCODE | Should -Be 0
             $decrypted | Should -Not -BeNullOrEmpty
@@ -277,7 +234,6 @@ creation_rules:
     Context 'Update Existing Secret' -Tag 'Updates' {
         BeforeEach {
             $script:TestSecretName = "update-test-$(New-Guid)"
-            # Pre-create a secret
             Set-Secret -Name $script:TestSecretName -Secret 'original-value' -Vault $script:TestVaultName
         }
 
@@ -291,7 +247,6 @@ creation_rules:
             Set-Secret -Name $script:TestSecretName -Secret 'updated-value' -Vault $script:TestVaultName
 
             $retrieved = Get-Secret -Name $script:TestSecretName -Vault $script:TestVaultName -AsPlainText
-            # Should return raw YAML string
             $retrieved | Should -BeOfType [string]
             Test-YamlContent -YamlContent $retrieved -ExpectedValues @{
                 value = 'updated-value'
@@ -305,7 +260,6 @@ creation_rules:
             Set-Secret -Name $script:TestSecretName -Secret $newHash -Vault $script:TestVaultName
 
             $retrieved = Get-Secret -Name $script:TestSecretName -Vault $script:TestVaultName -AsPlainText
-            # Should return raw YAML string with hashtable fields
             $retrieved | Should -BeOfType [string]
             Test-YamlContent -YamlContent $retrieved -ExpectedValues @{
                 key1 = 'value1'
@@ -334,7 +288,6 @@ creation_rules:
 
     Context 'Error Handling' -Tag 'ErrorHandling' {
         It 'Throws on invalid vault parameters' {
-            # Register vault with invalid path
             $badVaultName = 'BadVault'
             Register-SecretVault -Name $badVaultName -ModuleName $modulePath -VaultParameters @{
                 Path = 'C:\NonExistent\Path\That\Does\Not\Exist'
@@ -347,9 +300,8 @@ creation_rules:
         }
 
         It 'Throws on SOPS encryption failure' {
-            # Temporarily break SOPS configuration by removing .sops.yaml
             $sopsConfigPath = Join-Path $script:TestSecretsPath '.sops.yaml'
-            $sopsConfigPath = [System.IO.Path]::GetFullPath($sopsConfigPath)  # Normalize path
+            $sopsConfigPath = [System.IO.Path]::GetFullPath($sopsConfigPath)
             $originalConfig = Get-Content $sopsConfigPath -Raw
             Remove-Item $sopsConfigPath -Force
 
@@ -357,11 +309,10 @@ creation_rules:
                 { Set-Secret -Name 'test-fail' -Secret 'value' -Vault $script:TestVaultName -ErrorAction Stop } |
                     Should -Throw '*Unable to add secret*'
             }
- finally {
-                # Restore .sops.yaml - ensure parent directory exists
+            finally {
                 $parentDir = Split-Path $sopsConfigPath -Parent
                 if (-not (Test-Path $parentDir)) {
-                    New-Item -ItemType Directory -Path $parentDir -Force | Out-Null
+                    $null = New-Item -ItemType Directory -Path $parentDir -Force
                 }
                 Set-Content -Path $sopsConfigPath -Value $originalConfig -Force
             }
@@ -373,42 +324,21 @@ creation_rules:
             Set-Secret -Name $specialName -Secret 'value' -Vault $script:TestVaultName
             $retrieved = Get-Secret -Name $specialName -Vault $script:TestVaultName -AsPlainText
 
-            # Should return raw YAML string
             $retrieved | Should -BeOfType [string]
             $retrieved | Should -Match 'value:\s*value'
 
             Remove-Secret -Name $specialName -Vault $script:TestVaultName -ErrorAction SilentlyContinue
         }
-
-        # Note: Empty string test removed - Microsoft.PowerShell.SecretManagement does not allow
-        # empty strings to be passed to vault extensions (parameter validation fails before
-        # our extension is called). This is a limitation of SecretManagement, not our module.
     }
 
     Context 'Kubernetes Secret Support' -Tag 'Kubernetes' {
         BeforeAll {
-            # Register vault for K8s secrets (no special mode - just regular SOPS encryption)
-            $k8sVaultName = 'SopsK8sWriteVault'
             $k8sPath = Join-Path $TestDrive 'k8s-secrets'
-            New-Item -Path $k8sPath -ItemType Directory -Force | Out-Null
+            $null = New-Item -Path $k8sPath -ItemType Directory -Force
 
-            # Create .sops.yaml configuration
-            $testDataPath = Join-Path $PSScriptRoot 'TestData'
-            $testKeyFile = Join-Path $testDataPath 'test-key.txt'
-            if (Test-Path $testKeyFile) {
-                $ageKeyContent = Get-Content $testKeyFile -Raw
-                if ($ageKeyContent -match 'public key: (.+)') {
-                    $agePublicKey = $Matches[1].Trim()
-                    $sopsConfig = @"
-creation_rules:
-  - path_regex: \.yaml$
-    encrypted_regex: ^(data|stringData)$
-    age: $agePublicKey
-"@
-                    Set-Content -Path (Join-Path $k8sPath '.sops.yaml') -Value $sopsConfig
-                }
-            }
+            New-SopsConfig -Path $k8sPath -EncryptedRegex '^(data|stringData)$'
 
+            $k8sVaultName = 'SopsK8sWriteVault'
             Register-SecretVault -Name $k8sVaultName -ModuleName $modulePath -VaultParameters @{
                 Path        = $k8sPath
                 FilePattern = '*.yaml'
@@ -452,17 +382,15 @@ creation_rules:
             Set-Secret -Name $script:TestK8sSecretName -Secret $k8sSecret -Vault $script:K8sVaultName
 
             $retrieved = Get-Secret -Name $script:TestK8sSecretName -Vault $script:K8sVaultName -AsPlainText
-            # Should return raw YAML string with K8s manifest structure
             $retrieved | Should -BeOfType [string]
             Test-YamlContent -YamlContent $retrieved -ExpectedValues @{
-                kind = 'Secret'
-                'stringData.api-key' = 'secret-api-key-value'
+                kind                     = 'Secret'
+                'stringData.api-key'     = 'secret-api-key-value'
                 'stringData.db-password' = 'secret-db-password'
             } | Should -Be $true
         }
 
         It 'Accepts YAML string input (e.g., from New-KubernetesSecret pipeline)' {
-            # Simulate New-KubernetesSecret output - a YAML string
             $yamlString = @"
 kind: Secret
 apiVersion: v1
@@ -473,19 +401,16 @@ stringData:
   foo: "0"
 "@
 
-            # This should parse the YAML and store it as a structured K8s secret,
-            # NOT wrap it in a { value: "kind: Secret\n..." } structure
             Set-Secret -Name $script:TestK8sSecretName -Secret $yamlString -Vault $script:K8sVaultName
 
-            # Verify the file structure
             $filePath = Join-Path $script:K8sPath "$($script:TestK8sSecretName).yaml"
             $fileContent = Get-Content $filePath -Raw
 
-            # Should NOT have a "value:" wrapper with the YAML as a string literal
+            # Should NOT wrap YAML in a "value:" key
             $fileContent | Should -Not -Match 'value:\s*\|'
             $fileContent | Should -Not -Match 'value:\s*>\s*kind:'
 
-            # Should have the actual K8s structure
+            # Should have actual K8s structure
             $fileContent | Should -Match 'kind:\s*Secret'
             $fileContent | Should -Match 'apiVersion:\s*v1'
             $fileContent | Should -Match 'metadata:'
@@ -497,41 +422,20 @@ stringData:
             $decrypted | Should -Match 'stringData:'
             $decrypted | Should -Match 'foo:\s*[''"]0[''"]'
 
-            # Should NOT have duplicate fields (both value: and stringData:)
             if ($fileContent -match 'value:') {
                 $fileContent | Should -Not -Match 'stringData:'
             }
         }
-
     }
 }
 
 Describe 'Remove-Secret' -Tag 'WriteSupport', 'Integration' {
     BeforeAll {
-        # Create test vault
         $script:TestVaultName = 'SopsRemoveTestVault'
         $script:TestSecretsPath = Join-Path $TestDrive 'remove-secrets'
-        New-Item -Path $script:TestSecretsPath -ItemType Directory -Force | Out-Null
+        $null = New-Item -Path $script:TestSecretsPath -ItemType Directory -Force
 
-        # Create .sops.yaml configuration in test vault
-        $testDataPath = Join-Path $PSScriptRoot 'TestData'
-        $testKeyFile = Join-Path $testDataPath 'test-key.txt'
-
-        if (Test-Path $testKeyFile) {
-            # Read the age public key from the test key file
-            $ageKeyContent = Get-Content $testKeyFile -Raw
-            if ($ageKeyContent -match 'public key: (.+)') {
-                $agePublicKey = $Matches[1].Trim()
-
-                # Create .sops.yaml in test vault
-                $sopsConfig = @"
-creation_rules:
-  - path_regex: \.yaml$
-    age: $agePublicKey
-"@
-                Set-Content -Path (Join-Path $script:TestSecretsPath '.sops.yaml') -Value $sopsConfig
-            }
-        }
+        New-SopsConfig -Path $script:TestSecretsPath
 
         Register-SecretVault -Name $script:TestVaultName -ModuleName $modulePath -VaultParameters @{
             Path        = $script:TestSecretsPath
@@ -548,14 +452,12 @@ creation_rules:
     Context 'Removing Existing Secret' -Tag 'BasicOperations' {
         BeforeEach {
             $script:TestSecretName = "remove-test-$(New-Guid)"
-            # Pre-create a secret to remove
             Set-Secret -Name $script:TestSecretName -Secret 'to-be-removed' -Vault $script:TestVaultName
         }
 
         It 'Successfully removes existing secret' {
             Remove-Secret -Name $script:TestSecretName -Vault $script:TestVaultName
 
-            # Verify secret is gone
             $secret = Get-Secret -Name $script:TestSecretName -Vault $script:TestVaultName -ErrorAction SilentlyContinue
             $secret | Should -BeNullOrEmpty
         }
@@ -575,7 +477,6 @@ creation_rules:
         }
 
         It 'Completes successfully on removal' {
-            # Should not throw
             { Remove-Secret -Name $script:TestSecretName -Vault $script:TestVaultName } | Should -Not -Throw
         }
     }
@@ -590,10 +491,8 @@ creation_rules:
             $testName = "double-remove-$(New-Guid)"
             Set-Secret -Name $testName -Secret 'value' -Vault $script:TestVaultName
 
-            # First removal should succeed
             { Remove-Secret -Name $testName -Vault $script:TestVaultName } | Should -Not -Throw
 
-            # Second removal should throw
             { Remove-Secret -Name $testName -Vault $script:TestVaultName -ErrorAction Stop } |
                 Should -Throw '*Unable to remove secret*'
         }
@@ -611,30 +510,12 @@ creation_rules:
 
     Context 'Kubernetes Secret Data Key Removal' -Tag 'Kubernetes' {
         BeforeAll {
-            $k8sVaultName = 'SopsK8sRemoveVault'
             $k8sPath = Join-Path $TestDrive 'k8s-remove'
-            New-Item -Path $k8sPath -ItemType Directory -Force | Out-Null
+            $null = New-Item -Path $k8sPath -ItemType Directory -Force
 
-            # Create .sops.yaml configuration in k8s vault
-            $testDataPath = Join-Path $PSScriptRoot 'TestData'
-            $testKeyFile = Join-Path $testDataPath 'test-key.txt'
+            New-SopsConfig -Path $k8sPath
 
-            if (Test-Path $testKeyFile) {
-                # Read the age public key from the test key file
-                $ageKeyContent = Get-Content $testKeyFile -Raw
-                if ($ageKeyContent -match 'public key: (.+)') {
-                    $agePublicKey = $Matches[1].Trim()
-
-                    # Create .sops.yaml in k8s vault
-                    $sopsConfig = @"
-creation_rules:
-  - path_regex: \.yaml$
-    age: $agePublicKey
-"@
-                    Set-Content -Path (Join-Path $k8sPath '.sops.yaml') -Value $sopsConfig
-                }
-            }
-
+            $k8sVaultName = 'SopsK8sRemoveVault'
             Register-SecretVault -Name $k8sVaultName -ModuleName $modulePath -VaultParameters @{
                 Path        = $k8sPath
                 FilePattern = '*.yaml'
@@ -652,7 +533,6 @@ creation_rules:
         BeforeEach {
             $script:TestK8sSecretName = "k8s-remove-$(New-Guid)"
 
-            # Pre-create a K8s secret with multiple keys
             $k8sSecret = @{
                 apiVersion = 'v1'
                 kind       = 'Secret'
@@ -677,82 +557,55 @@ creation_rules:
         }
 
         It 'Removes individual key using path syntax with literal null' {
-            # Remove the 'host' key using path syntax
             ".stringData.host: null" | Set-Secret -Name $script:TestK8sSecretName -Vault $script:K8sVaultName
 
-            # Verify the key was removed
             $retrieved = Get-Secret -Name $script:TestK8sSecretName -Vault $script:K8sVaultName -AsPlainText
             $retrieved | Should -BeOfType [string]
             $retrieved | Should -Not -Match 'host:'
-
-            # Other keys should still exist
             $retrieved | Should -Match 'username:\s*prod_user'
             $retrieved | Should -Match 'password:\s*secretPass123'
         }
 
         It 'Removes individual key using path syntax with PowerShell $null' {
-            # Remove the 'username' key using PowerShell null variable syntax
             ".stringData.username: `$null" | Set-Secret -Name $script:TestK8sSecretName -Vault $script:K8sVaultName
 
-            # Verify the key was removed
             $retrieved = Get-Secret -Name $script:TestK8sSecretName -Vault $script:K8sVaultName -AsPlainText
             $retrieved | Should -BeOfType [string]
             $retrieved | Should -Not -Match 'username:'
-
-            # Other keys should still exist
             $retrieved | Should -Match 'host:\s*postgres\.example\.com'
             $retrieved | Should -Match 'password:\s*secretPass123'
         }
 
         It 'Removes multiple keys sequentially' {
-            # Remove host first
             ".stringData.host: null" | Set-Secret -Name $script:TestK8sSecretName -Vault $script:K8sVaultName
-
-            # Remove username next
             ".stringData.username: null" | Set-Secret -Name $script:TestK8sSecretName -Vault $script:K8sVaultName
 
-            # Verify both keys were removed
             $retrieved = Get-Secret -Name $script:TestK8sSecretName -Vault $script:K8sVaultName -AsPlainText
             $retrieved | Should -BeOfType [string]
             $retrieved | Should -Not -Match 'host:'
             $retrieved | Should -Not -Match 'username:'
-
-            # Password should still exist
             $retrieved | Should -Match 'password:\s*secretPass123'
         }
 
         It 'Does not set literal "null" string as value' {
-            # This test ensures we don't regress to setting "null" as a string value
             ".stringData.host: null" | Set-Secret -Name $script:TestK8sSecretName -Vault $script:K8sVaultName
 
-            # Verify the key was completely removed (not set to "null" string)
             $retrieved = Get-Secret -Name $script:TestK8sSecretName -Vault $script:K8sVaultName -AsPlainText
             $retrieved | Should -BeOfType [string]
-
-            # Should NOT have 'host: "null"' or 'host: null' in the output
             $retrieved | Should -Not -Match 'host:\s*["]?null["]?'
-
-            # The key should be completely absent
             $retrieved | Should -Not -Match 'host:'
         }
 
         It 'Does not set empty string when using $null syntax' {
-            # This test ensures we don't set empty string "" instead of removing
             ".stringData.password: `$null" | Set-Secret -Name $script:TestK8sSecretName -Vault $script:K8sVaultName
 
-            # Verify the key was completely removed (not set to empty string)
             $retrieved = Get-Secret -Name $script:TestK8sSecretName -Vault $script:K8sVaultName -AsPlainText
             $retrieved | Should -BeOfType [string]
-
-            # Should NOT have 'password: ""' in the output
             $retrieved | Should -Not -Match 'password:\s*["]?["]?'
-
-            # The key should be completely absent
             $retrieved | Should -Not -Match 'password:'
         }
 
         It 'Removes nested keys in structured secrets' {
-            # Create a secret with nested structure
             $nestedSecret = @{
                 apiVersion = 'v1'
                 kind       = 'Secret'
@@ -772,15 +625,11 @@ creation_rules:
             Set-Secret -Name $nestedName -Secret $nestedSecret -Vault $script:K8sVaultName
 
             try {
-                # Remove a nested label
                 ".metadata.labels.env: null" | Set-Secret -Name $nestedName -Vault $script:K8sVaultName
 
-                # Verify the nested key was removed
                 $retrieved = Get-Secret -Name $nestedName -Vault $script:K8sVaultName -AsPlainText
                 $retrieved | Should -BeOfType [string]
                 $retrieved | Should -Not -Match 'env:\s*prod'
-
-                # Other nested keys should still exist
                 $retrieved | Should -Match 'app:\s*myapp'
                 $retrieved | Should -Match 'api-key:\s*secret123'
             }
@@ -788,7 +637,6 @@ creation_rules:
                 Remove-Secret -Name $nestedName -Vault $script:K8sVaultName -ErrorAction SilentlyContinue
             }
         }
-
     }
 
     Context 'Cleanup and File Management' -Tag 'FileOperations' {
@@ -799,16 +647,12 @@ creation_rules:
             Set-Secret -Name $secret1 -Secret 'value1' -Vault $script:TestVaultName
             Set-Secret -Name $secret2 -Secret 'value2' -Vault $script:TestVaultName
 
-            # Remove first secret
             Remove-Secret -Name $secret1 -Vault $script:TestVaultName
 
-            # Second secret should still exist
             $retrieved = Get-Secret -Name $secret2 -Vault $script:TestVaultName -AsPlainText
-            # Should return raw YAML string
             $retrieved | Should -BeOfType [string]
             $retrieved | Should -Match 'value:\s*value2'
 
-            # Cleanup
             Remove-Secret -Name $secret2 -Vault $script:TestVaultName -ErrorAction SilentlyContinue
         }
     }
@@ -818,27 +662,9 @@ Describe 'Write Support Integration Scenarios' -Tag 'WriteSupport', 'Integration
     BeforeAll {
         $script:ScenarioVaultName = 'SopsScenarioVault'
         $script:ScenarioPath = Join-Path $TestDrive 'scenarios'
-        New-Item -Path $script:ScenarioPath -ItemType Directory -Force | Out-Null
+        $null = New-Item -Path $script:ScenarioPath -ItemType Directory -Force
 
-        # Create .sops.yaml configuration in test vault
-        $testDataPath = Join-Path $PSScriptRoot 'TestData'
-        $testKeyFile = Join-Path $testDataPath 'test-key.txt'
-
-        if (Test-Path $testKeyFile) {
-            # Read the age public key from the test key file
-            $ageKeyContent = Get-Content $testKeyFile -Raw
-            if ($ageKeyContent -match 'public key: (.+)') {
-                $agePublicKey = $Matches[1].Trim()
-
-                # Create .sops.yaml in test vault
-                $sopsConfig = @"
-creation_rules:
-  - path_regex: \.yaml$
-    age: $agePublicKey
-"@
-                Set-Content -Path (Join-Path $script:ScenarioPath '.sops.yaml') -Value $sopsConfig
-            }
-        }
+        New-SopsConfig -Path $script:ScenarioPath
 
         Register-SecretVault -Name $script:ScenarioVaultName -ModuleName $modulePath -VaultParameters @{
             Path        = $script:ScenarioPath
@@ -855,21 +681,16 @@ creation_rules:
     It 'Round-trip: Set, Get, Update, Get, Remove sequence' {
         $secretName = "roundtrip-$(New-Guid)"
 
-        # Create
         Set-Secret -Name $secretName -Secret 'initial' -Vault $script:ScenarioVaultName
         $value1 = Get-Secret -Name $secretName -Vault $script:ScenarioVaultName -AsPlainText
-        # Should return raw YAML string
         $value1 | Should -BeOfType [string]
         $value1 | Should -Match 'value:\s*initial'
 
-        # Update
         Set-Secret -Name $secretName -Secret 'updated' -Vault $script:ScenarioVaultName
         $value2 = Get-Secret -Name $secretName -Vault $script:ScenarioVaultName -AsPlainText
-        # Should return raw YAML string
         $value2 | Should -BeOfType [string]
         $value2 | Should -Match 'value:\s*updated'
 
-        # Remove
         Remove-Secret -Name $secretName -Vault $script:ScenarioVaultName
         $value3 = Get-Secret -Name $secretName -Vault $script:ScenarioVaultName -ErrorAction SilentlyContinue
         $value3 | Should -BeNullOrEmpty
@@ -883,23 +704,18 @@ creation_rules:
         )
 
         try {
-            # Create all
             foreach ($secret in $secrets) {
                 Set-Secret -Name $secret.Name -Secret $secret.Value -Vault $script:ScenarioVaultName
             }
 
-            # Verify all exist
             foreach ($secret in $secrets) {
                 $retrieved = Get-Secret -Name $secret.Name -Vault $script:ScenarioVaultName -AsPlainText
-                # Should return raw YAML string
                 $retrieved | Should -BeOfType [string]
                 $retrieved | Should -Match "value:\s*$($secret.Value)"
             }
 
-            # Remove one
             Remove-Secret -Name $secrets[1].Name -Vault $script:ScenarioVaultName
 
-            # Verify others still exist
             $retrieved1 = Get-Secret -Name $secrets[0].Name -Vault $script:ScenarioVaultName -AsPlainText
             $retrieved1 | Should -BeOfType [string]
             $retrieved1 | Should -Match 'value:\s*value1'
@@ -907,10 +723,8 @@ creation_rules:
             $retrieved3 = Get-Secret -Name $secrets[2].Name -Vault $script:ScenarioVaultName -AsPlainText
             $retrieved3 | Should -BeOfType [string]
             $retrieved3 | Should -Match 'value:\s*value3'
-
         }
- finally {
-            # Cleanup
+        finally {
             foreach ($secret in $secrets) {
                 Remove-Secret -Name $secret.Name -Vault $script:ScenarioVaultName -ErrorAction SilentlyContinue
             }
@@ -921,26 +735,20 @@ creation_rules:
         $secretName = "encryption-test-$(New-Guid)"
 
         try {
-            # Create
             Set-Secret -Name $secretName -Secret 'initial' -Vault $script:ScenarioVaultName
             $filePath = Join-Path $script:ScenarioPath "$secretName.yaml"
-            $content1 = Get-Content $filePath -Raw
-            $content1 | Should -Match 'sops:'
+            (Get-Content $filePath -Raw) | Should -Match 'sops:'
 
-            # Update
             Set-Secret -Name $secretName -Secret 'updated' -Vault $script:ScenarioVaultName
             $content2 = Get-Content $filePath -Raw
             $content2 | Should -Match 'sops:'
             $content2 | Should -Match 'ENC\['
 
-            # Verify decryption still works
             $retrieved = Get-Secret -Name $secretName -Vault $script:ScenarioVaultName -AsPlainText
-            # Should return raw YAML string
             $retrieved | Should -BeOfType [string]
             $retrieved | Should -Match 'value:\s*updated'
-
         }
- finally {
+        finally {
             Remove-Secret -Name $secretName -Vault $script:ScenarioVaultName -ErrorAction SilentlyContinue
         }
     }
@@ -949,21 +757,17 @@ creation_rules:
         $secretName = "rapid-ops-$(New-Guid)"
 
         try {
-            # Rapid operations
             Set-Secret -Name $secretName -Secret 'v1' -Vault $script:ScenarioVaultName
             Set-Secret -Name $secretName -Secret 'v2' -Vault $script:ScenarioVaultName
             Set-Secret -Name $secretName -Secret 'v3' -Vault $script:ScenarioVaultName
             Remove-Secret -Name $secretName -Vault $script:ScenarioVaultName
             Set-Secret -Name $secretName -Secret 'v4' -Vault $script:ScenarioVaultName
 
-            # Final state should be v4
             $retrieved = Get-Secret -Name $secretName -Vault $script:ScenarioVaultName -AsPlainText
-            # Should return raw YAML string
             $retrieved | Should -BeOfType [string]
             $retrieved | Should -Match 'value:\s*v4'
-
         }
- finally {
+        finally {
             Remove-Secret -Name $secretName -Vault $script:ScenarioVaultName -ErrorAction SilentlyContinue
         }
     }

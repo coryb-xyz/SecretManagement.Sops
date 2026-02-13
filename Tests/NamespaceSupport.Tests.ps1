@@ -1,99 +1,57 @@
 #Requires -Modules @{ ModuleName='Pester'; ModuleVersion='5.0.0' }
 
-<#
-.SYNOPSIS
-    Namespace Support and Collision Detection Tests for SecretManagement.Sops
-
-.DESCRIPTION
-    Test-Driven Development (TDD) test suite for namespace support.
-    These tests validate:
-    - Namespace extraction from folder paths
-    - Full path-based secret resolution
-    - Kubernetes secret handling (full hashtable and data key extraction)
-    - Short name collision detection
-    - Backward compatibility
-    - Edge cases
-
-.NOTES
-    Run with: Invoke-Pester -Path .\Tests\NamespaceSupport.Tests.ps1 -Tag 'Namespace'
-
-    TDD Workflow:
-    1. All tests FAIL initially (red)
-    2. Implement code to make tests pass (green)
-    3. Refactor while keeping tests green
-#>
-
 BeforeAll {
-    # Import test helpers for isolation utilities
     $testHelpersPath = Join-Path $PSScriptRoot 'TestHelpers.psm1'
     Import-Module $testHelpersPath -Force
 
-    # Auto-bootstrap test data if missing
     if (-not (Initialize-TestDataIfMissing)) {
         throw "Cannot run tests: Test data initialization failed. Please ensure SOPS and age are installed."
     }
 
-    # Clean up any orphaned test vaults from previous runs
     Remove-OrphanedTestVaults
 
-    # Save environment state (location, environment variables, registered vaults) state
     $script:testState = Initialize-TestEnvironment
 
-    # Import the main module
     $modulePath = Join-Path $PSScriptRoot '..\SecretManagement.Sops\SecretManagement.Sops.psd1'
     Import-Module $modulePath -Force
 
-    # Import SecretManagement module
     if (-not (Get-Module Microsoft.PowerShell.SecretManagement -ListAvailable)) {
         throw "Microsoft.PowerShell.SecretManagement module is required. Install with: Install-Module Microsoft.PowerShell.SecretManagement"
     }
     Import-Module Microsoft.PowerShell.SecretManagement -Force
 
-    # Configure test-specific age key in isolated environment
+    # Configure test-specific age key
     $testDataPath = Join-Path $PSScriptRoot 'TestData'
     $testKeyFile = Join-Path $testDataPath 'test-key.txt'
-    if (Test-Path $testKeyFile) {
-        $env:SOPS_AGE_KEY_FILE = $testKeyFile
-        Write-Verbose "Configured test-isolated SOPS_AGE_KEY_FILE: $testKeyFile"
-
-        # Extract public key from test key file for use in .sops.yaml
-        $publicKeyLine = Get-Content $testKeyFile | Select-Object -Skip 1 -First 1
-        if ($publicKeyLine -match 'public key:\s*(.+)') {
-            $script:TestAgePublicKey = $matches[1].Trim()
-            Write-Verbose "Extracted AGE public key: $script:TestAgePublicKey"
-        }
-        else {
-            throw "Failed to extract public key from $testKeyFile"
-        }
-    }
-    else {
+    if (-not (Test-Path $testKeyFile)) {
         throw "Test key file not found: $testKeyFile"
     }
 
-    # Create test vault with nested structure using TestDrive for automatic cleanup
-    $script:TestSecretsPath = Join-Path $TestDrive 'secrets'
+    $env:SOPS_AGE_KEY_FILE = $testKeyFile
 
-    # Create directory structure
-    $dirs = @(
-        'apps\foo\bar\dv1'
-        'apps\baz\prod'
-        'database'
-        'k8s'
-    )
-
-    foreach ($dir in $dirs) {
-        New-Item -Path (Join-Path $script:TestSecretsPath $dir) -ItemType Directory -Force | Out-Null
+    $publicKeyLine = Get-Content $testKeyFile | Select-Object -Skip 1 -First 1
+    if ($publicKeyLine -match 'public key:\s*(.+)') {
+        $script:TestAgePublicKey = $matches[1].Trim()
+    }
+    else {
+        throw "Failed to extract public key from $testKeyFile"
     }
 
-    # Create .sops.yaml config file for encryption using the extracted public key
-    $sopsConfig = @"
+    # Create test vault with nested structure
+    $script:TestSecretsPath = Join-Path $TestDrive 'secrets'
+
+    foreach ($dir in @('apps\foo\bar\dv1', 'apps\baz\prod', 'database', 'k8s')) {
+        $null = New-Item -Path (Join-Path $script:TestSecretsPath $dir) -ItemType Directory -Force
+    }
+
+    # Create .sops.yaml config
+    @"
 creation_rules:
   - path_regex: \.yaml$
     age: $script:TestAgePublicKey
-"@
-    $sopsConfig | Set-Content (Join-Path $script:TestSecretsPath '.sops.yaml')
+"@ | Set-Content (Join-Path $script:TestSecretsPath '.sops.yaml')
 
-    # Create test secret files (SOPS-encrypted)
+    # Create and encrypt test secret files
     $testSecrets = @{
         'apps\foo\bar\dv1\secret.yaml' = @'
 key: value
@@ -126,21 +84,15 @@ stringData:
 '@
     }
 
-    # Encrypt and write test files
     foreach ($file in $testSecrets.Keys) {
         $filePath = Join-Path $script:TestSecretsPath $file
-        $content = $testSecrets[$file]
+        $testSecrets[$file] | Set-Content $filePath -NoNewline
 
-        # Write unencrypted file first
-        $content | Set-Content $filePath -NoNewline
-
-        # Encrypt in place with SOPS
         Push-Location $script:TestSecretsPath
         try {
             $encrypted = & sops --encrypt --in-place $filePath 2>&1
             if ($LASTEXITCODE -ne 0) {
                 Write-Warning "Failed to encrypt $file : $encrypted"
-                # File remains unencrypted for testing
             }
         }
         finally {
@@ -148,33 +100,26 @@ stringData:
         }
     }
 
-    # Register vault with RelativePath naming strategy using isolated helper
+    # Register vault with RelativePath naming strategy
     $script:TestVaultName = New-IsolatedTestVault -BaseName 'SopsNamespaceTest' -ModulePath $modulePath -VaultParameters @{
         Path           = $script:TestSecretsPath
         FilePattern    = '*.yaml'
         Recurse        = $true
         NamingStrategy = 'RelativePath'
     }
-    Write-Verbose "Registered isolated test vault: $script:TestVaultName"
 }
 
 AfterAll {
-    # Unregister vault with retry logic
     if ($script:TestVaultName) {
         Remove-IsolatedTestVault -VaultName $script:TestVaultName
     }
 
-    # Restore environment state (location, environment variables, cleanup test vaults) state
     Restore-TestEnvironment -State $script:testState
-
-    # TestDrive cleanup happens automatically via Pester
-    # No need to manually remove $script:TestSecretsPath
 }
 
 Describe 'Namespace Extraction' -Tag 'Namespace', 'Unit' {
     Context 'Index Structure' {
         It 'Should extract namespace from deeply nested path' {
-            # Get the index
             $index = Get-SecretIndex -Path $script:TestSecretsPath -FilePattern '*.yaml' -Recurse $true `
                 -NamingStrategy 'RelativePath'
 
@@ -202,7 +147,6 @@ Describe 'Namespace Extraction' -Tag 'Namespace', 'Unit' {
             $index = Get-SecretIndex -Path $script:TestSecretsPath -FilePattern '*.yaml' -Recurse $true `
                 -NamingStrategy 'RelativePath'
 
-            # Find root-level api-key entry by checking if Namespace is empty
             $rootEntry = $index | Where-Object { $_.ShortName -eq 'api-key' -and $_.Namespace -eq '' }
 
             $rootEntry | Should -Not -BeNullOrEmpty
@@ -251,10 +195,6 @@ Describe 'Kubernetes Secret Handling' -Tag 'Namespace', 'K8s', 'Integration' {
             $secret | Should -Match 'stringData:'
         }
     }
-
-    # K8s Data Key Extraction tests removed - this was K8s-specific functionality
-    # that has been eliminated as part of simplification. The module now returns
-    # raw decrypted YAML strings that users parse with their preferred YAML parser.
 }
 
 Describe 'Short Name Resolution and Collision Detection' -Tag 'Namespace', 'Collision', 'Integration' {
@@ -279,7 +219,6 @@ Describe 'Short Name Resolution and Collision Detection' -Tag 'Namespace', 'Coll
     Context 'Collision Detection' {
         It 'Should throw error when short name is ambiguous' {
             # Both apps/foo/bar/dv1/secret and apps/baz/prod/secret exist
-            # SecretManagement wraps errors, so check InnerException for our message
             try {
                 Get-Secret -Name 'secret' -Vault $script:TestVaultName -ErrorAction Stop
                 throw "Should have thrown error"
@@ -328,13 +267,11 @@ Describe 'Get-SecretInfo Metadata' -Tag 'Namespace', 'Metadata', 'Integration' {
 
         It 'Should include ShortName in metadata' {
             $info = Get-SecretInfo -Name 'database/postgres' -Vault $script:TestVaultName
-
             $info.Metadata.ShortName | Should -Be 'postgres'
         }
 
         It 'Should display full path as Name' {
             $info = Get-SecretInfo -Name 'apps/foo/bar/dv1/secret' -Vault $script:TestVaultName
-
             $info.Name | Should -Be 'apps/foo/bar/dv1/secret'
         }
 
@@ -353,7 +290,6 @@ Describe 'Get-SecretInfo Metadata' -Tag 'Namespace', 'Metadata', 'Integration' {
             $infos | Should -Not -BeNullOrEmpty
             $infos.Count | Should -BeGreaterThan 0
 
-            # Should include apps/foo/bar/dv1/secret and apps/foo/bar/dv1/config
             $names = $infos.Name
             $names | Should -Contain 'apps/foo/bar/dv1/secret'
             $names | Should -Contain 'apps/foo/bar/dv1/config'
@@ -370,7 +306,7 @@ Describe 'Get-SecretInfo Metadata' -Tag 'Namespace', 'Metadata', 'Integration' {
             $infos = Get-SecretInfo -Name '*' -Vault $script:TestVaultName
 
             $infos | Should -Not -BeNullOrEmpty
-            $infos.Count | Should -BeGreaterOrEqual 6  # All test secrets
+            $infos.Count | Should -BeGreaterOrEqual 6
         }
     }
 }
@@ -378,7 +314,6 @@ Describe 'Get-SecretInfo Metadata' -Tag 'Namespace', 'Metadata', 'Integration' {
 Describe 'Backward Compatibility' -Tag 'Namespace', 'Compatibility', 'Integration' {
     Context 'Existing Functionality' {
         It 'Should work with existing RelativePath full names' {
-            # This has always worked in RelativePath strategy
             $secret = Get-Secret -Name 'database/postgres' -Vault $script:TestVaultName -AsPlainText
 
             $secret | Should -Not -BeNullOrEmpty
@@ -386,12 +321,8 @@ Describe 'Backward Compatibility' -Tag 'Namespace', 'Compatibility', 'Integratio
             $secret | Should -Match 'password:\s*dbpass'
         }
 
-        # K8s data key extraction test removed - this K8s-specific feature has been eliminated
-
         It 'Should work with unique short names without regression' {
-            # Short names that are unique should continue to work
             $secret = Get-Secret -Name 'postgres' -Vault $script:TestVaultName -AsPlainText
-
             $secret | Should -Not -BeNullOrEmpty
         }
     }
@@ -399,18 +330,10 @@ Describe 'Backward Compatibility' -Tag 'Namespace', 'Compatibility', 'Integratio
 
 Describe 'Edge Cases' -Tag 'Namespace', 'EdgeCases', 'Integration' {
     BeforeAll {
-        # Use pre-existing test data files from TestData folder
         $script:EdgeCaseVaultName = 'SopsEdgeCaseVault'
         $script:EdgeCaseSecretsPath = Join-Path $PSScriptRoot 'TestData'
 
-        # Register edge case vault pointing to TestData folder
-        # This folder contains pre-encrypted test files:
-        # - a/b/c/d/e/f/deep-secret.yaml
-        # - env-prod/api_key-v2.yaml
-        try {
-            Unregister-SecretVault -Name $script:EdgeCaseVaultName -ErrorAction SilentlyContinue
-        }
- catch {}
+        Unregister-SecretVault -Name $script:EdgeCaseVaultName -ErrorAction SilentlyContinue
 
         Register-SecretVault -Name $script:EdgeCaseVaultName -ModuleName $modulePath -VaultParameters @{
             Path           = $script:EdgeCaseSecretsPath
@@ -454,7 +377,6 @@ Describe 'Edge Cases' -Tag 'Namespace', 'EdgeCases', 'Integration' {
 
         It 'Should handle underscores in short name' {
             $info = Get-SecretInfo -Name 'env-prod/api_key-v2' -Vault $script:EdgeCaseVaultName
-
             $info.Metadata.ShortName | Should -Be 'api_key-v2'
         }
     }
@@ -463,12 +385,9 @@ Describe 'Edge Cases' -Tag 'Namespace', 'EdgeCases', 'Integration' {
         It 'Should handle empty vault gracefully' {
             $emptyVaultName = 'SopsEmptyVault'
             $emptyPath = Join-Path $TestDrive 'empty'
-            New-Item -Path $emptyPath -ItemType Directory -Force | Out-Null
+            $null = New-Item -Path $emptyPath -ItemType Directory -Force
 
-            try {
-                Unregister-SecretVault -Name $emptyVaultName -ErrorAction SilentlyContinue
-            }
- catch {}
+            Unregister-SecretVault -Name $emptyVaultName -ErrorAction SilentlyContinue
 
             Register-SecretVault -Name $emptyVaultName -ModuleName $modulePath -VaultParameters @{
                 Path        = $emptyPath
@@ -477,7 +396,6 @@ Describe 'Edge Cases' -Tag 'Namespace', 'EdgeCases', 'Integration' {
             }
 
             $infos = Get-SecretInfo -Vault $emptyVaultName
-
             $infos | Should -BeNullOrEmpty
 
             Unregister-SecretVault -Name $emptyVaultName -ErrorAction SilentlyContinue

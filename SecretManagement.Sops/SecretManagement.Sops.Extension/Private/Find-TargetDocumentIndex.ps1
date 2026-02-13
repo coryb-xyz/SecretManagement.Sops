@@ -1,3 +1,28 @@
+function Get-DocumentMetadataName {
+    <#
+    .SYNOPSIS
+    Safely extracts metadata.name from a parsed YAML document.
+    Returns $null when the document structure does not contain the key.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [object]$Document
+    )
+
+    if ($Document -isnot [System.Collections.IDictionary] -or -not $Document.Contains('metadata')) {
+        return $null
+    }
+
+    $metadata = $Document['metadata']
+    if ($metadata -isnot [System.Collections.IDictionary] -or -not $metadata.Contains('name')) {
+        return $null
+    }
+
+    return $metadata['name']
+}
+
 function Format-DocumentList {
     <#
     .SYNOPSIS
@@ -58,17 +83,11 @@ function Find-TargetDocumentIndex {
         [string]$DocumentName
     )
 
-    # Collect document names for error messages
     $docNames = for ($i = 0; $i -lt $ParsedDocuments.Count; $i++) {
-        $doc = $ParsedDocuments[$i]
-        $name = $null
-        if ($doc -is [System.Collections.IDictionary] -and $doc.ContainsKey('metadata')) {
-            $meta = $doc['metadata']
-            if ($meta -is [System.Collections.IDictionary] -and $meta.ContainsKey('name')) {
-                $name = $meta['name']
-            }
+        [PSCustomObject]@{
+            Index = $i
+            Name  = Get-DocumentMetadataName -Document $ParsedDocuments[$i]
         }
-        [PSCustomObject]@{ Index = $i; Name = $name }
     }
 
     # Mode 1: Explicit targeting by DocumentName
@@ -88,23 +107,14 @@ function Find-TargetDocumentIndex {
     }
 
     # Mode 2: Auto-detect by key path existence
-    $matchingIndices = [System.Collections.Generic.List[int]]::new()
-
-    for ($i = 0; $i -lt $ParsedDocuments.Count; $i++) {
+    $matchingIndices = @(for ($i = 0; $i -lt $ParsedDocuments.Count; $i++) {
         $doc = $ParsedDocuments[$i]
-        $allPathsExist = $true
+        $missingPath = $SetPaths | Where-Object {
+            -not (Test-SopsPathExists -SopsPath $_.Path -ParsedDocument $doc)
+        } | Select-Object -First 1
 
-        foreach ($item in $SetPaths) {
-            if (-not (Test-SopsPathExists -SopsPath $item.Path -ParsedDocument $doc)) {
-                $allPathsExist = $false
-                break
-            }
-        }
-
-        if ($allPathsExist) {
-            $matchingIndices.Add($i)
-        }
-    }
+        if (-not $missingPath) { $i }
+    })
 
     if ($matchingIndices.Count -eq 0) {
         $pathList = ($SetPaths | ForEach-Object { "  $($_.Path)" }) -join "`n"

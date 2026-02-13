@@ -86,6 +86,7 @@
     New-KubernetesSecret -Name 'env-config' -FromEnvFile '.env' -AsHashtable
     #>
     [CmdletBinding(DefaultParameterSetName = 'generic')]
+    [OutputType([string], [hashtable])]
     param(
         [Parameter(Mandatory, Position = 0)]
         [string]$Name,
@@ -228,10 +229,10 @@
     if ($AsHashtable) {
         return $secret
     }
-
-    if ($AsJson) {
+    elseif ($AsJson) {
         return ($secret | ConvertTo-Json -Depth 10)
     }
-
-    return ($secret | ConvertTo-Yaml)
+    else {
+        return ($secret | ConvertTo-Yaml)
+    }
 }

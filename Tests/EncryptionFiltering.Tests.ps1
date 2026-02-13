@@ -1,41 +1,34 @@
-﻿BeforeAll {
-    # Import test helpers for isolation utilities
+BeforeAll {
     $testHelpersPath = Join-Path $PSScriptRoot 'TestHelpers.psm1'
     Import-Module $testHelpersPath -Force
 
-    # Save environment state (location, environment variables, registered vaults)
     $script:testState = Initialize-TestEnvironment
 
-    # Auto-bootstrap test data if missing
     if (-not (Initialize-TestDataIfMissing)) {
         throw "Cannot run tests: Test data initialization failed. Please ensure SOPS and age are installed."
     }
 
-    # Clean up any orphaned test vaults from previous runs
     Remove-OrphanedTestVaults
 
-    # Import the module
     $modulePath = Join-Path $PSScriptRoot '..' 'SecretManagement.Sops' 'SecretManagement.Sops.psd1'
     Import-Module $modulePath -Force
 
-    # Import private functions for unit testing
+    # Import private and public functions for unit testing
     $privateFunctionsPath = Join-Path $PSScriptRoot '..' 'SecretManagement.Sops' 'Private'
-    Get-ChildItem -Path $privateFunctionsPath -Filter '*.ps1' | ForEach-Object {
-        . $_.FullName
-    }
+    Get-ChildItem -Path $privateFunctionsPath -Filter '*.ps1' | ForEach-Object { . $_.FullName }
 
-    # Import public functions
     $publicFunctionsPath = Join-Path $PSScriptRoot '..' 'SecretManagement.Sops' 'Public'
-    Get-ChildItem -Path $publicFunctionsPath -Filter '*.ps1' | ForEach-Object {
-        . $_.FullName
-    }
+    Get-ChildItem -Path $publicFunctionsPath -Filter '*.ps1' | ForEach-Object { . $_.FullName }
 
-    # Test data path
+    # Import extension module functions (needed by Get-SecretInfo and Get-VaultParameters tests)
+    $extensionPath = Join-Path $PSScriptRoot '..' 'SecretManagement.Sops' 'SecretManagement.Sops.Extension'
+    Get-ChildItem -Path (Join-Path $extensionPath 'Private') -Filter '*.ps1' | ForEach-Object { . $_.FullName }
+    Get-ChildItem -Path (Join-Path $extensionPath 'Public') -Filter '*.ps1' | ForEach-Object { . $_.FullName }
+
     $script:TestDataPath = Join-Path $PSScriptRoot 'TestData'
 }
 
 AfterAll {
-    # Restore environment state (location, environment variables, cleanup test vaults)
     Restore-TestEnvironment -State $script:testState
 }
 
@@ -89,13 +82,8 @@ Describe 'Test-SopsEncrypted' -Tag 'Unit', 'EncryptionFiltering' {
 
     Context 'Performance Characteristics' {
         It 'Uses streaming (does not load full file into memory)' {
-            # This test verifies the implementation uses StreamReader
-            # We can't directly test memory usage, but we can verify it works with large files
             $filePath = Join-Path $TestDataPath 'simple-secret.yaml'
-
-            # Should complete quickly even if file were large (actual test is implementation review)
-            $result = Test-SopsEncrypted -FilePath $filePath
-            $result | Should -Be $true
+            Test-SopsEncrypted -FilePath $filePath | Should -Be $true
         }
     }
 }
@@ -115,7 +103,7 @@ Describe 'Get-SopsConfiguration' -Tag 'Unit', 'EncryptionFiltering' {
 
         It 'Returns empty array when .sops.yaml not found' {
             $tempPath = Join-Path $TestDrive 'no-config'
-            New-Item -Path $tempPath -ItemType Directory -Force | Out-Null
+            $null = New-Item -Path $tempPath -ItemType Directory -Force
 
             $config = Get-SopsConfiguration -VaultPath $tempPath
             $config.Found | Should -Be $false
@@ -124,15 +112,14 @@ Describe 'Get-SopsConfiguration' -Tag 'Unit', 'EncryptionFiltering' {
 
         It 'Handles directory without .sops.yaml gracefully' {
             $tempPath = Join-Path $TestDrive 'empty-vault'
-            New-Item -Path $tempPath -ItemType Directory -Force | Out-Null
+            $null = New-Item -Path $tempPath -ItemType Directory -Force
 
             { Get-SopsConfiguration -VaultPath $tempPath } | Should -Not -Throw
         }
 
         It 'Collects unique suffixes from multiple rules' {
-            # Create test .sops.yaml with multiple rules
             $tempPath = Join-Path $TestDrive 'multi-suffix'
-            New-Item -Path $tempPath -ItemType Directory -Force | Out-Null
+            $null = New-Item -Path $tempPath -ItemType Directory -Force
 
             $sopsConfig = @"
 creation_rules:
@@ -156,12 +143,10 @@ creation_rules:
 
         It 'Handles malformed .sops.yaml gracefully' {
             $tempPath = Join-Path $TestDrive 'malformed-config'
-            New-Item -Path $tempPath -ItemType Directory -Force | Out-Null
+            $null = New-Item -Path $tempPath -ItemType Directory -Force
 
-            # Create invalid YAML
             Set-Content -Path (Join-Path $tempPath '.sops.yaml') -Value "invalid: [yaml: content:"
 
-            # Should not throw, but return empty result
             { Get-SopsConfiguration -VaultPath $tempPath } | Should -Not -Throw
         }
     }
@@ -172,11 +157,9 @@ Describe 'Get-SecretIndex with RequireEncryption' -Tag 'Integration', 'Encryptio
         It 'Includes all files when RequireEncryption=$false (default)' {
             $index = Get-SecretIndex -Path $TestDataPath -RequireEncryption $false
 
-            # Should include both plain and encrypted files
             $allFiles = $index | Select-Object -ExpandProperty FilePath
             $allFiles | Should -Not -BeNullOrEmpty
 
-            # Verify we have plain files (they contain '-plain' in name)
             $plainFiles = $index | Where-Object { $_.FilePath -like '*-plain.yaml' }
             $plainFiles.Count | Should -BeGreaterThan 0
         }
@@ -184,7 +167,6 @@ Describe 'Get-SecretIndex with RequireEncryption' -Tag 'Integration', 'Encryptio
         It 'Uses default RequireEncryption=$false when parameter not specified' {
             $index = Get-SecretIndex -Path $TestDataPath
 
-            # Should include plain files by default
             $plainFiles = $index | Where-Object { $_.FilePath -like '*-plain.yaml' }
             $plainFiles.Count | Should -BeGreaterThan 0
         }
@@ -194,7 +176,6 @@ Describe 'Get-SecretIndex with RequireEncryption' -Tag 'Integration', 'Encryptio
         It 'Filters out plain files when RequireEncryption=$true' {
             $index = Get-SecretIndex -Path $TestDataPath -RequireEncryption $true
 
-            # Should NOT include any *-plain.yaml files
             $plainFiles = $index | Where-Object { $_.FilePath -like '*-plain.yaml' }
             $plainFiles.Count | Should -Be 0
         }
@@ -202,7 +183,6 @@ Describe 'Get-SecretIndex with RequireEncryption' -Tag 'Integration', 'Encryptio
         It 'Includes only SOPS-encrypted files when RequireEncryption=$true' {
             $index = Get-SecretIndex -Path $TestDataPath -RequireEncryption $true
 
-            # Every file in index should have SOPS metadata
             foreach ($entry in $index) {
                 Test-SopsEncrypted -FilePath $entry.FilePath | Should -Be $true
             }
@@ -211,7 +191,6 @@ Describe 'Get-SecretIndex with RequireEncryption' -Tag 'Integration', 'Encryptio
         It 'Excludes files matching unencrypted_suffix pattern' {
             $index = Get-SecretIndex -Path $TestDataPath -RequireEncryption $true
 
-            # Should NOT include config_unencrypted.yaml
             $unencryptedFiles = $index | Where-Object { $_.FilePath -like '*_unencrypted.yaml' }
             $unencryptedFiles.Count | Should -Be 0
         }
@@ -219,16 +198,14 @@ Describe 'Get-SecretIndex with RequireEncryption' -Tag 'Integration', 'Encryptio
         It 'Excludes fake-sops.yaml (has sops: but no version)' {
             $index = Get-SecretIndex -Path $TestDataPath -RequireEncryption $true
 
-            # Should NOT include fake-sops.yaml
             $fakeFiles = $index | Where-Object { $_.FilePath -like '*fake-sops.yaml' }
             $fakeFiles.Count | Should -Be 0
         }
 
         It 'Returns empty array when no encrypted files exist in vault' {
             $tempPath = Join-Path $TestDrive 'plain-only'
-            New-Item -Path $tempPath -ItemType Directory -Force | Out-Null
+            $null = New-Item -Path $tempPath -ItemType Directory -Force
 
-            # Create only plain files
             Set-Content -Path (Join-Path $tempPath 'plain1.yaml') -Value "key: value"
             Set-Content -Path (Join-Path $tempPath 'plain2.yaml') -Value "foo: bar"
 
@@ -238,8 +215,7 @@ Describe 'Get-SecretIndex with RequireEncryption' -Tag 'Integration', 'Encryptio
     }
 
     Context 'Suffix Filtering' {
-        It 'Applies suffix filter before SOPS detection (performance)' {
-            # This is validated by checking that _unencrypted files are excluded
+        It 'Applies suffix filter before SOPS detection' {
             $index = Get-SecretIndex -Path $TestDataPath -RequireEncryption $true
 
             $excludedFiles = $index | Where-Object {
@@ -253,20 +229,6 @@ Describe 'Get-SecretIndex with RequireEncryption' -Tag 'Integration', 'Encryptio
 }
 
 Describe 'Get-SecretInfo with RequireEncryption' -Tag 'Integration', 'EncryptionFiltering' {
-    BeforeAll {
-        # Import extension module functions
-        $extensionPath = Join-Path $PSScriptRoot '..' 'SecretManagement.Sops' 'SecretManagement.Sops.Extension'
-        $extensionPrivate = Join-Path $extensionPath 'Private'
-        $extensionPublic = Join-Path $extensionPath 'Public'
-
-        Get-ChildItem -Path $extensionPrivate -Filter '*.ps1' | ForEach-Object {
-            . $_.FullName
-        }
-        Get-ChildItem -Path $extensionPublic -Filter '*.ps1' | ForEach-Object {
-            . $_.FullName
-        }
-    }
-
     It 'Passes RequireEncryption parameter from VaultParameters to Get-SecretIndex' {
         $additionalParams = @{
             Path              = $TestDataPath
@@ -275,11 +237,8 @@ Describe 'Get-SecretInfo with RequireEncryption' -Tag 'Integration', 'Encryption
 
         $secretInfo = Get-SecretInfo -Filter '*' -VaultName 'TestVault' -AdditionalParameters $additionalParams
 
-        # Verify only encrypted secrets returned
-        # Note: This test verifies integration, actual secret retrieval tested in other suites
         $secretInfo | Should -Not -BeNullOrEmpty
 
-        # All returned secrets should be from SOPS-encrypted files
         foreach ($info in $secretInfo) {
             $filePath = $info.Metadata.FilePath
             if ($filePath) {
@@ -290,23 +249,12 @@ Describe 'Get-SecretInfo with RequireEncryption' -Tag 'Integration', 'Encryption
 }
 
 Describe 'Backward Compatibility' -Tag 'Integration', 'EncryptionFiltering' {
-    BeforeAll {
-        # Import extension module functions for backward compat tests
-        $extensionPath = Join-Path $PSScriptRoot '..' 'SecretManagement.Sops' 'SecretManagement.Sops.Extension'
-        $extensionPrivate = Join-Path $extensionPath 'Private'
-
-        Get-ChildItem -Path $extensionPrivate -Filter 'Get-VaultParameters.ps1' | ForEach-Object {
-            . $_.FullName
-        }
-    }
-
     It 'Get-VaultParameters provides RequireEncryption=$false default' {
         $params = Get-VaultParameters -AdditionalParameters @{}
         $params.RequireEncryption | Should -Be $false
     }
 
     It 'Get-SecretIndex works without RequireEncryption parameter' {
-        # Default behavior - should not throw
         { Get-SecretIndex -Path $TestDataPath } | Should -Not -Throw
     }
 }
